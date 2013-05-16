@@ -26,13 +26,13 @@ type connection struct {
 	tunIdx uint64                         // Index to assign the next tunnel
 	//tuns   map[uint64]*tunnel     // Active tunnels
 
-	hand ConnHandler
+	hand ConnectionHandler
 	lock sync.Mutex
 }
 
 // Connects to the Iris message relay running on locally on port, registering
 // with the name app, using hand as the inbound event handler.
-func Connect(port int, app string, handler ConnHandler) (Connection, error) {
+func Connect(port int, app string, handler ConnectionHandler) (Connection, error) {
 	// Create the new connection
 	conn := &connection{
 		reqs: make(map[uint64]chan []byte),

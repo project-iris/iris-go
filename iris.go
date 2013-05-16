@@ -11,7 +11,8 @@
 package iris
 
 // Communication interface to the iris framework. Currently the following
-// patterns are supported: request-reply, publish-subscribe and exclusive-pair.
+// patterns are supported: broadcast, request-reply, publish-subscribe and
+// exclusive-pair.
 type Connection interface {
 	// Executes a synchronous request to app (load balanced between all active),
 	// and returns the received reply, or an error if a timeout is reached.
