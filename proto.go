@@ -18,15 +18,15 @@ import (
 )
 
 const (
-	opReq byte = iota
+	opBcast byte = iota
+	opReq
 	opRep
-	opBcast
-	opTunReq
-	opTunRep
-	opTunClose
 	opSub
 	opPub
 	opUnsub
+	opTunReq
+	opTunRep
+	opTunClose
 	opClose
 )
 
@@ -40,6 +40,15 @@ func (r *relay) sendByte(data byte) error {
 		}
 	}
 	return nil
+}
+
+// Serializes a boolean into the relay.
+func (r *relay) sendBool(data bool) error {
+	if data {
+		return r.sendByte(1)
+	} else {
+		return r.sendByte(0)
+	}
 }
 
 // Serializes a variable int into the relay.
@@ -83,6 +92,20 @@ func (r *relay) sendInit(app string) error {
 	return r.sendString(app)
 }
 
+// Atomically sends an application broadcast message into the relay.
+func (r *relay) sendBroadcast(app string, msg []byte) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opBcast); err != nil {
+		return err
+	}
+	if err := r.sendString(app); err != nil {
+		return err
+	}
+	return r.sendBinary(msg)
+}
+
 // Atomically sends a request message into the relay.
 func (r *relay) sendRequest(reqId uint64, app string, req []byte, time int) error {
 	r.sockLock.Lock()
@@ -115,37 +138,6 @@ func (r *relay) sendReply(reqId uint64, rep []byte) error {
 		return err
 	}
 	return r.sendBinary(rep)
-}
-
-// Atomically sends an application broadcast message into the relay.
-func (r *relay) sendBroadcast(app string, msg []byte) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opBcast); err != nil {
-		return err
-	}
-	if err := r.sendString(app); err != nil {
-		return err
-	}
-	return r.sendBinary(msg)
-}
-
-// Atomically sends a tunneling message into the relay.
-func (r *relay) sendTunnelRequest(tunId uint64, app string, time int) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opTunReq); err != nil {
-		return err
-	}
-	if err := r.sendVarint(tunId); err != nil {
-		return err
-	}
-	if err := r.sendString(app); err != nil {
-		return err
-	}
-	return r.sendVarint(uint64(time))
 }
 
 // Atomically sends a topic subscription message into the relay.
@@ -184,6 +176,37 @@ func (r *relay) sendUnsubscribe(topic string) error {
 	return r.sendString(topic)
 }
 
+// Atomically sends a tunneling message into the relay.
+func (r *relay) sendTunnelRequest(tunId uint64, app string, time int) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opTunReq); err != nil {
+		return err
+	}
+	if err := r.sendVarint(tunId); err != nil {
+		return err
+	}
+	if err := r.sendString(app); err != nil {
+		return err
+	}
+	return r.sendVarint(uint64(time))
+}
+
+// Atomically sends a tunnel termination message into the relay.
+func (r *relay) sendTunnelClose(tunId uint64, local bool) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opTunClose); err != nil {
+		return err
+	}
+	if err := r.sendVarint(tunId); err != nil {
+		return err
+	}
+	return r.sendBool(local)
+}
+
 // Atomically sends a close message into the relay.
 func (r *relay) sendClose() error {
 	r.sockLock.Lock()
@@ -201,6 +224,15 @@ func (r *relay) recvByte() (byte, error) {
 		}
 	}
 	return r.inByteBuf[0], nil
+}
+
+// Retrieves a boolean from the relay.
+func (r *relay) recvBool() (bool, error) {
+	b, err := r.recvByte()
+	if err != nil {
+		return false, err
+	}
+	return b == 1, nil
 }
 
 // Retrieves a variable int from the relay.
@@ -257,7 +289,7 @@ func (r *relay) recvString() (string, error) {
 	}
 }
 
-// Retrieves a remote request from the relay and processes it on a new thread.
+// Retrieves a remote request from the relay and processes it.
 func (r *relay) procRequest() error {
 	// Retrieve the message parts
 	reqId, err := r.recvVarint()
@@ -317,6 +349,46 @@ func (r *relay) procPublish() error {
 	return nil
 }
 
+// Retrieves a remote tunneling request from the relay and processes it.
+func (r *relay) procTunnelRequest() error {
+	// Retrieve the message parts
+	tunId, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	// Handle the message
+	go r.handleTunnelRequest(tunId)
+	return nil
+}
+
+// Retrieves a remote tunneling request from the relay and processes it.
+func (r *relay) procTunnelReply() error {
+	// Retrieve the message parts
+	tunId, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	// Handle the message
+	go r.handleTunnelReply(tunId)
+	return nil
+}
+
+// Retrieves a remote tunneling request from the relay and processes it.
+func (r *relay) procTunnelClose() error {
+	// Retrieve the message parts
+	tunId, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	local, err := r.recvBool()
+	if err != nil {
+		return err
+	}
+	// Handle the message
+	go r.handleTunnelClose(tunId, local)
+	return nil
+}
+
 // Retrieves messages from the client connection and keeps processing them until
 // either side closes the socket.
 func (r *relay) process() {
@@ -334,6 +406,12 @@ func (r *relay) process() {
 				err = r.procReply()
 			case opBcast:
 				err = r.procBroadcast()
+			case opTunReq:
+				err = r.procTunnelRequest()
+			case opTunRep:
+				err = r.procTunnelReply()
+			case opTunClose:
+				err = r.procTunnelClose()
 			case opPub:
 				err = r.procPublish()
 			case opClose:

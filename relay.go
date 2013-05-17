@@ -29,9 +29,12 @@ type relay struct {
 	subLive map[string]SubscriptionHandler // Active subscriptions
 	subLock sync.RWMutex                   // Mutex to protect the subscription map
 
-	tunIdx  uint64             // Index to assign the next tunnel
-	tunLive map[uint64]*tunnel // Active tunnels
-	tunLock sync.RWMutex       // Mutex to protect the tunnel map
+	tunInLive map[uint64]*tunnel // Active inbound tunnels
+	tunInLock sync.RWMutex       // Mutex to protect the inbound tunnel map
+
+	tunOutIdx  uint64             // Index to assign the next outbound tunnel
+	tunOutLive map[uint64]*tunnel // Active outbound tunnels
+	tunOutLock sync.RWMutex       // Mutex to protect the outbound tunnel map
 
 	// Network layer fields
 	sock     net.Conn   // Network connection to the iris node
@@ -58,10 +61,11 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 	// Create the relay object and initialize the connection
 	rel := &relay{
 		// Application layer
-		handler: handler,
-		reqPend: make(map[uint64]chan []byte),
-		subLive: make(map[string]SubscriptionHandler),
-		tunLive: make(map[uint64]*tunnel),
+		handler:    handler,
+		reqPend:    make(map[uint64]chan []byte),
+		subLive:    make(map[string]SubscriptionHandler),
+		tunInLive:  make(map[uint64]*tunnel),
+		tunOutLive: make(map[uint64]*tunnel),
 
 		// Network layer
 		sock:      sock,
@@ -76,6 +80,19 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 	// All ok, start processing messages and return
 	go rel.process()
 	return rel, nil
+}
+
+// Implements iris.Connection.Broadcast.
+func (r *relay) Broadcast(app string, msg []byte) error {
+	// Sanity check on the arguments
+	if len(app) == 0 {
+		panic("iris: empty application identifier")
+	}
+	if msg == nil {
+		panic("iris: nil message")
+	}
+	// Broadcast and return
+	return r.sendBroadcast(app, msg)
 }
 
 // Implements iris.Connection.Request.
@@ -123,19 +140,6 @@ func (r *relay) Request(app string, req []byte, timeout int) ([]byte, error) {
 	case rep := <-reqCh:
 		return rep, nil
 	}
-}
-
-// Implements iris.Connection.Broadcast.
-func (r *relay) Broadcast(app string, msg []byte) error {
-	// Sanity check on the arguments
-	if len(app) == 0 {
-		panic("iris: empty application identifier")
-	}
-	if msg == nil {
-		panic("iris: nil message")
-	}
-	// Broadcast and return
-	return r.sendBroadcast(app, msg)
 }
 
 // Implements iris.Connection.Subscribe.
@@ -199,6 +203,11 @@ func (r *relay) Unsubscribe(topic string) error {
 		delete(r.subLive, topic)
 	}
 	return err
+}
+
+// Implements iris.Connection.Tunnel.
+func (r *relay) Tunnel(app string, timeout int) (Tunnel, error) {
+	return r.initiateTunnel(app, timeout)
 }
 
 // Implements iris.Connection.Close.

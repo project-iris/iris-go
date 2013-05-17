@@ -24,6 +24,13 @@ func Connect(port int, app string, handler ConnectionHandler) (Connection, error
 
 // Communication interface to the iris network.
 type Connection interface {
+	// Broadcasts asynchronously a message to all applications of type app. No
+	// guarantees are made that all recipients receive the message (best effort).
+	//
+	// The method blocks until the message is sent to the relay, returning a
+	// net.Error in case of a failure.
+	Broadcast(app string, msg []byte) error
+
 	// Executes a synchronous request to app, load balanced between all the active
 	// ones, returning the received reply.
 	//
@@ -33,23 +40,6 @@ type Connection interface {
 	// The timeout is in milliseconds. Setting infinite timeouts is not supported,
 	// hence the usual value of 0 (or less) will result in a panic!
 	Request(app string, req []byte, timeout int) ([]byte, error)
-
-	// Broadcasts asynchronously a message to all applications of type app. No
-	// guarantees are made that all recipients receive the message (best effort).
-	//
-	// The method blocks until the message is sent to the relay, returning a
-	// net.Error in case of a failure.
-	Broadcast(app string, msg []byte) error
-
-	// Opens a direct tunnel to an instance of app, allowing pairwise-exclusive
-	// and order-guaranteed message passing between them.
-	//
-	// The method blocks until either the newly created tunnel is set up, or an
-	// error occurs, in which case a nil tunnel and a net.Error is returned.
-	//
-	// The timeout is in milliseconds. Setting infinite timeouts is not supported,
-	// hence the usual value of 0 (or less) will result in a panic!
-	Tunnel(app string, timeout int) (Tunnel, error)
 
 	// Subscribes to topic, using handler as the callback for arriving events.
 	//
@@ -75,6 +65,16 @@ type Connection interface {
 	// Unsubscribing from a topic not subscribed to is considered a programming
 	// error and will result in a panic!
 	Unsubscribe(topic string) error
+
+	// Opens a direct tunnel to an instance of app, allowing pairwise-exclusive
+	// and order-guaranteed message passing between them.
+	//
+	// The method blocks until either the newly created tunnel is set up, or an
+	// error occurs, in which case a nil tunnel and a net.Error is returned.
+	//
+	// The timeout is in milliseconds. Setting infinite timeouts is not supported,
+	// hence the usual value of 0 (or less) will result in a panic!
+	Tunnel(app string, timeout int) (Tunnel, error)
 
 	// Gracefully terminates the connection with all subscriptions and tunnels.
 	//
@@ -115,13 +115,13 @@ type Tunnel interface {
 
 // Handler for the connection scope events.
 type ConnectionHandler interface {
+	// Handles a message broadcasted to all applications of the local type.
+	HandleBroadcast(msg []byte)
+
 	// Handles a request (msg), returning the reply that should be forwarded back
 	// to the caller. If the method crashes, nothing is retuned and the caller
 	// will eventually time out.
 	HandleRequest(msg []byte) []byte
-
-	// Handles a message broadcasted to all applications of the local type.
-	HandleBroadcast(msg []byte)
 
 	// Handles the request to open a direct tunnel.
 	HandleTunnel(tun Tunnel)
