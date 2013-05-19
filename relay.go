@@ -29,12 +29,9 @@ type relay struct {
 	subLive map[string]SubscriptionHandler // Active subscriptions
 	subLock sync.RWMutex                   // Mutex to protect the subscription map
 
-	tunInLive map[uint64]*tunnel // Active inbound tunnels
-	tunInLock sync.RWMutex       // Mutex to protect the inbound tunnel map
-
-	tunOutIdx  uint64             // Index to assign the next outbound tunnel
-	tunOutLive map[uint64]*tunnel // Active outbound tunnels
-	tunOutLock sync.RWMutex       // Mutex to protect the outbound tunnel map
+	tunIdx  uint64             // Index to assign the next tunnel
+	tunLive map[uint64]*tunnel // Active tunnels
+	tunLock sync.RWMutex       // Mutex to protect the tunnel map
 
 	// Network layer fields
 	sock     net.Conn   // Network connection to the iris node
@@ -61,11 +58,10 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 	// Create the relay object and initialize the connection
 	rel := &relay{
 		// Application layer
-		handler:    handler,
-		reqPend:    make(map[uint64]chan []byte),
-		subLive:    make(map[string]SubscriptionHandler),
-		tunInLive:  make(map[uint64]*tunnel),
-		tunOutLive: make(map[uint64]*tunnel),
+		handler: handler,
+		reqPend: make(map[uint64]chan []byte),
+		subLive: make(map[string]SubscriptionHandler),
+		tunLive: make(map[uint64]*tunnel),
 
 		// Network layer
 		sock:      sock,

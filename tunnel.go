@@ -11,6 +11,7 @@ package iris
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -18,11 +19,14 @@ import (
 type tunnel struct {
 	rel *relay // Message relay to the iris node
 
-	id    uint64 // Tunnel identifier (either given or received)
-	local bool   // Flag specifying the tunnel originator
+	id   uint64   // Tunnel identifier (either given or received)
+	init chan int // Initialization channel receiving the send allowance
 
-	init chan struct{} // Successful connection signaller
-	quit chan struct{} // Termination singaller
+	// Throttling
+	send chan struct{} // Allowance of sends
+	last uint64        // Last acknowledges send
+	lock sync.Mutex    // Mutex to protect the last field
+	recv chan []byte   // Recv data channel
 }
 
 // Initiates a new tunnel to a remote app.
@@ -35,24 +39,23 @@ func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 		panic(fmt.Sprintf("iris: invalid timeout %d <= 0", timeout))
 	}
 	// Create a potential tunnel
-	r.tunOutLock.Lock()
-	tunId := r.tunOutIdx
+	r.tunLock.Lock()
+	tunId := r.tunIdx
 	tun := &tunnel{
-		rel:   r,
-		id:    tunId,
-		local: true,
-		init:  make(chan struct{}, 1),
-		quit:  make(chan struct{}),
+		rel:  r,
+		id:   tunId,
+		recv: make(chan []byte, 1),
+		init: make(chan int, 1),
 	}
-	r.tunOutIdx++
-	r.tunOutLive[tunId] = tun
-	r.tunOutLock.Unlock()
+	r.tunIdx++
+	r.tunLive[tunId] = tun
+	r.tunLock.Unlock()
 
 	// Send the tunneling request and clean up in case of a failure
 	if err := r.sendTunnelRequest(tunId, app, timeout); err != nil {
-		r.tunOutLock.Lock()
-		delete(r.tunOutLive, tunId)
-		r.tunOutLock.Unlock()
+		r.tunLock.Lock()
+		delete(r.tunLive, tunId)
+		r.tunLock.Unlock()
 		return nil, err
 	}
 	// Wait for tunneling completion or a timeouot
@@ -60,9 +63,9 @@ func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 	select {
 	case <-tick:
 		// Timeout, remove the tunnel leftover
-		r.tunOutLock.Lock()
-		delete(r.tunOutLive, tunId)
-		r.tunOutLock.Unlock()
+		r.tunLock.Lock()
+		delete(r.tunLive, tunId)
+		r.tunLock.Unlock()
 
 		// Error out with a temporary failure
 		err := &relayError{
@@ -71,24 +74,33 @@ func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 			timeout:   true,
 		}
 		return nil, err
-	case <-tun.init:
+	case win := <-tun.init:
+		tun.send = make(chan struct{}, win)
 		return tun, nil
 	}
 }
 
 // Accepts an incoming tunneling request from a remote app.
-func (r *relay) acceptTunnel(tunId uint64) Tunnel {
+func (r *relay) acceptTunnel(peerId uint64, win int) Tunnel {
 	// Create the local tunnel endpoint
-	r.tunInLock.Lock()
+	r.tunLock.Lock()
+	tunId := r.tunIdx
 	tun := &tunnel{
-		rel:   r,
-		id:    tunId,
-		local: false,
-		quit:  make(chan struct{}),
+		rel:  r,
+		id:   tunId,
+		send: make(chan struct{}, win),
+		recv: make(chan []byte, 1),
 	}
-	r.tunInLive[tunId] = tun
-	r.tunInLock.Unlock()
+	r.tunIdx++
+	r.tunLive[tunId] = tun
+	r.tunLock.Unlock()
 
+	// Ack the tunnel creation to the relay
+	if err := r.sendTunnelReply(peerId, tunId); err != nil {
+		r.tunLock.Lock()
+		delete(r.tunLive, tunId)
+		r.tunLock.Unlock()
+	}
 	// Return the accepted tunnel
 	return tun
 }
@@ -102,20 +114,74 @@ func (t *tunnel) Send(msg []byte, timeout int) error {
 	if timeout < 0 {
 		panic(fmt.Sprintf("iris: invalid timeout %d < 0", timeout))
 	}
-	// Send the message over to the relay
-	return nil
+	// Create (the possibly nil) timeout signaller
+	var tick <-chan time.Time
+	if timeout > 0 {
+		tick = time.Tick(time.Duration(timeout) * time.Millisecond)
+	}
+	// Query for a send allowance
+	select {
+	case <-tick:
+		return &relayError{
+			message:   fmt.Sprintf("iris: failed to forward within %d ms", timeout),
+			temporary: true,
+			timeout:   true,
+		}
+	case t.send <- struct{}{}:
+		return t.rel.sendTunnelSend(t.id, msg)
+	}
 }
 
+// Implements iris.Tunnel.Recv.
 func (t *tunnel) Recv(timeout int) ([]byte, error) {
-	return nil, nil
+	// Sanity check on the arguments
+	if timeout < 0 {
+		panic(fmt.Sprintf("iris: invalid timeout %d < 0", timeout))
+	}
+	// Check for leftovers from a previous timeout
+	select {
+	case msg := <-t.recv:
+		return msg, nil
+	default:
+	}
+	// Send the retrieval request
+	if err := t.rel.sendTunnelRecv(t.id); err != nil {
+		return nil, err
+	}
+	// Create (the possibly nil) timeout signaller and wait for the reply
+	var tick <-chan time.Time
+	if timeout > 0 {
+		tick = time.Tick(time.Duration(timeout) * time.Millisecond)
+	}
+	select {
+	case <-tick:
+		return nil, &relayError{
+			message:   fmt.Sprintf("iris: failed to receive within %d ms", timeout),
+			temporary: true,
+			timeout:   true,
+		}
+	case msg := <-t.recv:
+		return msg, nil
+	}
 }
 
 // Implements iris.Tunnel.Close.
 func (t *tunnel) Close() error {
-	return t.rel.sendTunnelClose(t.id, t.local)
+	return t.rel.sendTunnelClose(t.id)
 }
 
-// Stops transfer threads and releases attached resources.
-func (t *tunnel) cleanup() {
-	close(t.quit)
+// Acknowledges messages till ack, increasing the send allowance.
+func (t *tunnel) handleAck(ack uint64) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	for i := 0; i < int(ack-t.last); i++ {
+		<-t.send
+	}
+	t.last = ack
+}
+
+// Forwards msg as to the receiving process.
+func (t *tunnel) handleRecv(msg []byte) {
+	t.recv <- msg
 }

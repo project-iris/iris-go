@@ -59,49 +59,58 @@ func (r *relay) handlePublish(topic string, msg []byte) {
 }
 
 // Opens a new tunnel endpoint and binds it to the remote one.
-func (r *relay) handleTunnelRequest(tunId uint64) {
-	tun := r.acceptTunnel(tunId)
+func (r *relay) handleTunnelRequest(tunId uint64, win int) {
+	tun := r.acceptTunnel(tunId, win)
 	r.handler.HandleTunnel(tun)
 }
 
 // Finalizes a locally initiated tunneling operation with the remote endpoint.
-func (r *relay) handleTunnelReply(tunId uint64) {
-	r.tunOutLock.RLock()
-	defer r.tunOutLock.RUnlock()
+func (r *relay) handleTunnelReply(tunId uint64, win int) {
+	r.tunLock.RLock()
+	defer r.tunLock.RUnlock()
 
 	// Make sure the request is still alive and don't block if dying
-	if tun, ok := r.tunOutLive[tunId]; ok {
-		tun.init <- struct{}{}
+	if tun, ok := r.tunLive[tunId]; ok {
+		tun.init <- win
 	} else {
-		log.Printf("iris: stale reply arrived for tunnel request #%v.", tunId)
+		log.Printf("iris: stale reply arrived for tunnelling request #%v.", tunId)
+	}
+}
+
+// Acknowledges the messages till ack as sent, allowing more to proceed.
+func (r *relay) handleTunnelAck(tunId uint64, ack uint64) {
+	r.tunLock.Lock()
+	defer r.tunLock.Unlock()
+
+	if tun, ok := r.tunLive[tunId]; ok {
+		tun.handleAck(ack)
+	} else {
+		log.Printf("iris: stale ack for tunnel #%v.", tunId)
+	}
+}
+
+// Forwards the data to a receive request to the recipient.
+func (r *relay) handleTunnelRecv(tunId uint64, msg []byte) {
+	r.tunLock.Lock()
+	defer r.tunLock.Unlock()
+
+	if tun, ok := r.tunLive[tunId]; ok {
+		tun.handleRecv(msg)
+	} else {
+		log.Printf("iris: stale receive for tunnel #%v.", tunId)
 	}
 }
 
 // Terminates a tunnel, stopping all data transfers.
-func (r *relay) handleTunnelClose(tunId uint64, local bool) {
-	var tun *tunnel
-	var ok bool
+func (r *relay) handleTunnelClose(tunId uint64) {
+	r.tunLock.Lock()
+	defer r.tunLock.Unlock()
 
-	// Retrieve and remove the tunnel (if still live)
-	if local {
-		r.tunOutLock.Lock()
-		if tun, ok = r.tunOutLive[tunId]; ok {
-			delete(r.tunOutLive, tunId)
-		} else {
-			log.Printf("iris: stale close of local tunnel #%v.", tunId)
-		}
-		r.tunOutLock.Unlock()
+	if _, ok := r.tunLive[tunId]; ok {
+		delete(r.tunLive, tunId)
 	} else {
-		r.tunInLock.Lock()
-		if tun, ok = r.tunInLive[tunId]; ok {
-			delete(r.tunInLive, tunId)
-		} else {
-			log.Printf("iris: stale close of remote tunnel #%v.", tunId)
-		}
-		r.tunInLock.Unlock()
+		log.Printf("iris: stale close of tunnel #%v.", tunId)
 	}
-	// Clean up the tunnel
-	tun.cleanup()
 }
 
 // Notifies the application of the relay link going down.

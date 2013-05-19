@@ -25,6 +25,9 @@ const (
 	opUnsub
 	opTunReq
 	opTunRep
+	opTunAck
+	opTunSend
+	opTunRecv
 	opTunClose
 	opClose
 )
@@ -192,18 +195,54 @@ func (r *relay) sendTunnelRequest(tunId uint64, app string, time int) error {
 	return r.sendVarint(uint64(time))
 }
 
+// Atomically sends the tunneling ack for a request into the relay.
+func (r *relay) sendTunnelReply(peerId, tunId uint64) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opTunRep); err != nil {
+		return err
+	}
+	if err := r.sendVarint(peerId); err != nil {
+		return err
+	}
+	return r.sendVarint(tunId)
+}
+
+// Atomically sends a tunnel data message into the relay.
+func (r *relay) sendTunnelSend(tunId uint64, msg []byte) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opTunSend); err != nil {
+		return err
+	}
+	if err := r.sendVarint(tunId); err != nil {
+		return err
+	}
+	return r.sendBinary(msg)
+}
+
+// Atomically sends a tunnel data request message into the relay.
+func (r *relay) sendTunnelRecv(tunId uint64) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opTunRecv); err != nil {
+		return err
+	}
+	return r.sendVarint(tunId)
+}
+
 // Atomically sends a tunnel termination message into the relay.
-func (r *relay) sendTunnelClose(tunId uint64, local bool) error {
+func (r *relay) sendTunnelClose(tunId uint64) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
 
 	if err := r.sendByte(opTunClose); err != nil {
 		return err
 	}
-	if err := r.sendVarint(tunId); err != nil {
-		return err
-	}
-	return r.sendBool(local)
+	return r.sendVarint(tunId)
 }
 
 // Atomically sends a close message into the relay.
@@ -355,8 +394,12 @@ func (r *relay) procTunnelRequest() error {
 	if err != nil {
 		return err
 	}
+	win, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
 	// Handle the message
-	go r.handleTunnelRequest(tunId)
+	go r.handleTunnelRequest(tunId, int(win))
 	return nil
 }
 
@@ -367,8 +410,44 @@ func (r *relay) procTunnelReply() error {
 	if err != nil {
 		return err
 	}
+	win, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
 	// Handle the message
-	go r.handleTunnelReply(tunId)
+	go r.handleTunnelReply(tunId, int(win))
+	return nil
+}
+
+// Retrieves a remote tunnel send ack and processes it.
+func (r *relay) procTunnelAck() error {
+	// Retrieve the message parts
+	tunId, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	ack, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	// Handle the message
+	go r.handleTunnelAck(tunId, ack)
+	return nil
+}
+
+// Retrieves a remote tunnel recv reply and processes it.
+func (r *relay) procTunnelRecv() error {
+	// Retrieve the message parts
+	tunId, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	msg, err := r.recvBinary()
+	if err != nil {
+		return err
+	}
+	// Handle the message
+	go r.handleTunnelRecv(tunId, msg)
 	return nil
 }
 
@@ -379,12 +458,8 @@ func (r *relay) procTunnelClose() error {
 	if err != nil {
 		return err
 	}
-	local, err := r.recvBool()
-	if err != nil {
-		return err
-	}
 	// Handle the message
-	go r.handleTunnelClose(tunId, local)
+	go r.handleTunnelClose(tunId)
 	return nil
 }
 
@@ -403,14 +478,18 @@ func (r *relay) process() {
 				err = r.procReply()
 			case opBcast:
 				err = r.procBroadcast()
+			case opPub:
+				err = r.procPublish()
 			case opTunReq:
 				err = r.procTunnelRequest()
 			case opTunRep:
 				err = r.procTunnelReply()
+			case opTunAck:
+				err = r.procTunnelAck()
+			case opTunRecv:
+				err = r.procTunnelRecv()
 			case opTunClose:
 				err = r.procTunnelClose()
-			case opPub:
-				err = r.procPublish()
 			case opClose:
 				closed = true
 			default:
