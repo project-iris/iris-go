@@ -78,9 +78,7 @@ type Connection interface {
 
 	// Gracefully terminates the connection with all subscriptions and tunnels.
 	//
-	// An error is returned if closure could not be forwarded to the relay.
-	//
-	// Double close is considered a programming error and will result in a panic!
+	// The method blocks until the connection is torn down or an error occurs.
 	Close() error
 }
 
@@ -106,8 +104,8 @@ type Tunnel interface {
 	// Closes the tunnel between the pair. Any blocked read and write operations
 	// will terminate with a failure.
 	//
-	// The method blocks until the relay node receives the message, or an error
-	// occures, in which case a net.Error is returned.
+	// The method blocks until the connection is torn down or an error occurs, in
+	// which case a net.Error is returned.
 	//
 	// Double close is considered a programming error and will result in a panic!
 	Close() error
@@ -127,7 +125,7 @@ type ConnectionHandler interface {
 	HandleTunnel(tun Tunnel)
 
 	// Handles the unexpecter termination of the relay conenction.
-	HandleDrop()
+	HandleDrop(reason error)
 }
 
 // Subscription handler receiving events from a single subscribed topic.

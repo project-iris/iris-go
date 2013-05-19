@@ -14,7 +14,6 @@ package iris
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 )
 
 const (
@@ -392,11 +391,9 @@ func (r *relay) procTunnelClose() error {
 // Retrieves messages from the client connection and keeps processing them until
 // either side closes the socket.
 func (r *relay) process() {
-	defer r.sock.Close()
-
 	var op byte
 	var err error
-	for err == nil {
+	for closed := false; !closed && err == nil; {
 		// Retrieve the next opcode and call the specific handler for the rest
 		if op, err = r.recvByte(); err == nil {
 			switch op {
@@ -415,18 +412,18 @@ func (r *relay) process() {
 			case opPub:
 				err = r.procPublish()
 			case opClose:
-				return
+				closed = true
 			default:
 				err = fmt.Errorf("unknown opcode: %v", op)
 			}
 		}
 	}
-	// Check whether failure is due to termination request
-	select {
-	case <-r.quit:
-		// Quit in progress, all ok
-	default:
-		log.Printf("iris: protocol error: %v", err)
-		go r.handleDrop()
+	// Nofity the application if the connection failed
+	if err != nil {
+		go r.handleDrop(err)
 	}
+	// Close the socket and return error (if any) when requested
+	err = r.sock.Close()
+	errc := <-r.quit
+	errc <- err
 }

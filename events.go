@@ -105,6 +105,6 @@ func (r *relay) handleTunnelClose(tunId uint64, local bool) {
 }
 
 // Notifies the application of the relay link going down.
-func (r *relay) handleDrop() {
-	r.handler.HandleDrop()
+func (r *relay) handleDrop(reason error) {
+	r.handler.HandleDrop(reason)
 }

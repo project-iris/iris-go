@@ -44,7 +44,7 @@ type relay struct {
 	inByteBuf []byte // Buffer for byte decoding
 	inVarBuf  []byte // Buffer for variable int decoding
 
-	quit chan struct{} // Quit channel to signal the receiver to stop
+	quit chan chan error // Quit channel to synchronize receiver termination
 }
 
 // Connects to a local relay endpoint on port and logs in with id app.
@@ -72,7 +72,7 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 		outVarBuf: make([]byte, binary.MaxVarintLen64),
 		inByteBuf: make([]byte, 1),
 		inVarBuf:  make([]byte, binary.MaxVarintLen64),
-		quit:      make(chan struct{}),
+		quit:      make(chan chan error),
 	}
 	if err := rel.sendInit(app); err != nil {
 		return nil, err
@@ -212,6 +212,12 @@ func (r *relay) Tunnel(app string, timeout int) (Tunnel, error) {
 
 // Implements iris.Connection.Close.
 func (r *relay) Close() error {
-	defer close(r.quit)
-	return r.sendClose()
+	// Send a graceful close to the relay node
+	if err := r.sendClose(); err != nil {
+		return err
+	}
+	// Wait till the close syncs and return
+	errc := make(chan error, 1)
+	r.quit <- errc
+	return <-errc
 }
