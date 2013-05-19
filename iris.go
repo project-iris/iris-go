@@ -7,13 +7,13 @@
 //
 // Author: peterke@gmail.com (Peter Szilagyi)
 
-// Package iris contains the go bindings to the iris messaging framework.
+// Package iris contains the go binding to the iris messaging framework.
 package iris
 
 // Returns the current version of the API. Connecting to and iris node will fail
 // unless the versions match exactly.
 func Version() string {
-	return "v1.0"
+	return relayVersion
 }
 
 // Connects to the iris message relay running locally, registering with the id
@@ -84,6 +84,9 @@ type Connection interface {
 
 // Communication stream between the local application and a remote endpoint. The
 // ordered delivery of messages is guaranteed.
+//
+// Note, a tunnel is designed to be used by a single thread. Concurrent access
+// will result in undefined behavior.
 type Tunnel interface {
 	// Sends a message over the tunnel to the remote pair.
 	//

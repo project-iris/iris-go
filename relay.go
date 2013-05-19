@@ -124,12 +124,11 @@ func (r *relay) Request(app string, req []byte, timeout int) ([]byte, error) {
 		return nil, err
 	}
 	// Retrieve the results or time out
-	tick := time.Tick(time.Duration(timeout) * time.Millisecond)
 	select {
-	case <-tick:
+	case <-time.After(time.Duration(timeout) * time.Millisecond):
 		err := &relayError{
 			message:   fmt.Sprintf("iris: no reply within %d ms", timeout),
-			temporary: false,
+			temporary: true,
 			timeout:   true,
 		}
 		return nil, err
@@ -203,6 +202,7 @@ func (r *relay) Unsubscribe(topic string) error {
 
 // Implements iris.Connection.Tunnel.
 func (r *relay) Tunnel(app string, timeout int) (Tunnel, error) {
+	// Simple call indirection to move into the tunnel source file
 	return r.initiateTunnel(app, timeout)
 }
 
