@@ -41,6 +41,7 @@ type relay struct {
 	inByteBuf []byte // Buffer for byte decoding
 	inVarBuf  []byte // Buffer for variable int decoding
 
+	init chan struct{}   // Init channel to receive a success signal
 	quit chan chan error // Quit channel to synchronize receiver termination
 }
 
@@ -55,7 +56,7 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 	if err != nil {
 		return nil, err
 	}
-	// Create the relay object and initialize the connection
+	// Create the relay object
 	rel := &relay{
 		// Application layer
 		handler: handler,
@@ -70,7 +71,11 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 		inVarBuf:  make([]byte, binary.MaxVarintLen64),
 		quit:      make(chan chan error),
 	}
+	// Initialize the connection and wait for a confirmation
 	if err := rel.sendInit(app); err != nil {
+		return nil, err
+	}
+	if err := rel.procInit(); err != nil {
 		return nil, err
 	}
 	// All ok, start processing messages and return

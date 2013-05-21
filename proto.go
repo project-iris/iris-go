@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	opBcast byte = iota
+	opInit byte = iota
+	opBcast
 	opReq
 	opRep
 	opSub
@@ -89,9 +90,12 @@ func (r *relay) sendString(data string) error {
 	return r.sendBinary([]byte(data))
 }
 
-// Initializes the connection by sending the requested app identifier.
+// Assembles and serializes an init packet into the relay.
 func (r *relay) sendInit(app string) error {
-	if err := r.sendString(Version()); err != nil {
+	if err := r.sendByte(opInit); err != nil {
+		return err
+	}
+	if err := r.sendString(relayVersion); err != nil {
 		return err
 	}
 	return r.sendString(app)
@@ -328,6 +332,20 @@ func (r *relay) recvString() (string, error) {
 	} else {
 		return string(data), err
 	}
+}
+
+// Retrieves a connection initialization response and returns whether ok.
+func (r *relay) procInit() error {
+	if op, err := r.recvByte(); err != nil {
+		return err
+	} else if op != opInit {
+		return &relayError{
+			message:   fmt.Sprintf("protocol violation"),
+			temporary: false,
+			timeout:   false,
+		}
+	}
+	return nil
 }
 
 // Retrieves a remote request from the relay and processes it.

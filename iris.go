@@ -10,8 +10,8 @@
 // Package iris contains the go binding to the iris messaging framework.
 package iris
 
-// Returns the current version of the API. Connecting to and iris node will fail
-// unless the versions match exactly.
+// Returns the relay protocol version implemented. Connecting to an Iris node
+// will fail unless the versions match exactly.
 func Version() string {
 	return relayVersion
 }
@@ -76,7 +76,8 @@ type Connection interface {
 	// hence the usual value of 0 (or less) will result in a panic!
 	Tunnel(app string, timeout int) (Tunnel, error)
 
-	// Gracefully terminates the connection with all subscriptions and tunnels.
+	// Gracefully terminates the connection removing all subscriptions and closing
+	// all tunnels.
 	//
 	// The method blocks until the connection is torn down or an error occurs.
 	Close() error
