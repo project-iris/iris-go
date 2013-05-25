@@ -9,11 +9,16 @@
 
 package iris
 
-// Relay error implemneting the net.Error interface.
+// Specialized error interface to allow querying timeout errors.
+type Error interface {
+	error
+	Timeout() bool
+}
+
+// Relay error implemneting the Error interface.
 type relayError struct {
-	message   string
-	temporary bool
-	timeout   bool
+	message string
+	timeout bool
 }
 
 // Implements error.Error.
@@ -21,12 +26,23 @@ func (e *relayError) Error() string {
 	return e.message
 }
 
-// Implements net.Error.Temporary.
-func (e *relayError) Temporary() bool {
-	return e.temporary
-}
-
-// Implements net.Error.Timeout.
+// Implements Error.Timeout.
 func (e *relayError) Timeout() bool {
 	return e.timeout
+}
+
+// Creates a timeout error.
+func timeError(err error) error {
+	return &relayError{
+		message: err.Error(),
+		timeout: true,
+	}
+}
+
+// Creates a permanent error.
+func permError(err error) error {
+	return &relayError{
+		message: err.Error(),
+		timeout: false,
+	}
 }

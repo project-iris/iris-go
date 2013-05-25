@@ -16,18 +16,10 @@ import (
 )
 
 // Error to return on a closed connection or tunnel.
-var tunnelClosedError = &relayError{
-	message:   fmt.Sprintf("iris: tunnel terminating"),
-	temporary: false,
-	timeout:   false,
-}
+var tunnelClosedError = permError(fmt.Errorf("iris: tunnel terminating"))
 
 // Error to return on a timed-out tunnel operation.
-var tunnelTimeError = &relayError{
-	message:   fmt.Sprintf("iris: tunnel operation timed out"),
-	temporary: true,
-	timeout:   true,
-}
+var tunnelTimeError = timeError(fmt.Errorf("iris: tunnel operation timed out"))
 
 // Ordered message stream between two endpoints.
 type tunnel struct {

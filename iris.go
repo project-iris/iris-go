@@ -24,17 +24,17 @@ func Connect(port int, app string, handler ConnectionHandler) (Connection, error
 
 // Communication interface to the iris network.
 type Connection interface {
-	// Broadcasts asynchronously a message to all applications of type app. No
-	// guarantees are made that all recipients receive the message (best effort).
+	// Broadcasts a message to all applications of type app. No guarantees are
+	// made that all recipients receive the message (best effort).
 	//
-	// The method blocks until the message is sent to the relay, returning a
-	// net.Error in case of a failure.
+	// The call blocks until the message is sent to the relay, returning an
+	// iris.Error in case of a failure.
 	Broadcast(app string, msg []byte) error
 
 	// Executes a synchronous request to app, load balanced between all the active
 	// ones, returning the received reply.
 	//
-	// In case of a failure, the function returns a nil reply with a net.Error
+	// In case of a failure, the function returns a nil reply with an iris.Error
 	// stating the reason.
 	//
 	// The timeout is in milliseconds. Setting infinite timeouts is not supported,
@@ -44,7 +44,7 @@ type Connection interface {
 	// Subscribes to topic, using handler as the callback for arriving events.
 	//
 	// The method blocks until the subscription is forwarded to the relay, or an
-	// error occures, in which case a net.Error is returned.
+	// error occures, in which case an iris.Error is returned.
 	//
 	// Double subscription is considered a programming error and will result in a
 	// panic!
@@ -54,13 +54,13 @@ type Connection interface {
 	// subscribers receive the message (best effort).
 	//
 	// The method does blocks until the message is forwarded to the relay, or an
-	// error occures, in which case a net.Error is returned.
+	// error occures, in which case an iris.Error is returned.
 	Publish(topic string, msg []byte) error
 
 	// Unsubscribes from topic, receiving no more event notifications for it.
 	//
 	// The method does blocks until the unsubscription is forwarded to the relay,
-	// or an error occures, in which case a net.Error is returned.
+	// or an error occures, in which case an iris.Error is returned.
 	//
 	// Unsubscribing from a topic not subscribed to is considered a programming
 	// error and will result in a panic!
@@ -70,7 +70,7 @@ type Connection interface {
 	// and order-guaranteed message passing between them.
 	//
 	// The method blocks until either the newly created tunnel is set up, or an
-	// error occurs, in which case a nil tunnel and a net.Error is returned.
+	// error occurs, in which case a nil tunnel and an iris.Error is returned.
 	//
 	// The timeout is in milliseconds. Setting infinite timeouts is not supported,
 	// hence the usual value of 0 (or less) will result in a panic!
@@ -79,7 +79,7 @@ type Connection interface {
 	// Gracefully terminates the connection removing all subscriptions and closing
 	// all tunnels.
 	//
-	// The method blocks until the connection is torn down or an error occurs.
+	// The call blocks until the connection is torn down or an error occurs.
 	Close() error
 }
 
@@ -92,14 +92,14 @@ type Tunnel interface {
 	// Sends a message over the tunnel to the remote pair.
 	//
 	// The method blocks until the lcaol relay node receives the message, or an
-	// error occurs, in which case a net.Error is returned.
+	// error occurs, in which case an iris.Error is returned.
 	//
 	// The timeout is in milliseconds. Inifinite timeouts are supported by setting
 	// a value of 0. Anything less will result in a panic!
 	Send(msg []byte, timeout int) error
 
 	// Retrieves a message from the tunnel, blocking until one is available. As
-	// with the Send method, Recv too returns a net.Error in case of a failure.
+	// with the Send method, Recv too returns an iris.Error in case of a failure.
 	//
 	// The timeout is in milliseconds. Inifinite timeouts are supported by setting
 	// a value of 0. Anything less will result in a panic!
@@ -109,7 +109,7 @@ type Tunnel interface {
 	// will terminate with a failure.
 	//
 	// The method blocks until the connection is torn down or an error occurs, in
-	// which case a net.Error is returned.
+	// which case an iris.Error is returned.
 	//
 	// Double close is considered a programming error and will result in a panic!
 	Close() error

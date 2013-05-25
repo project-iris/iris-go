@@ -10,7 +10,7 @@
 package iris
 
 import (
-	"encoding/binary"
+	"bufio"
 	"fmt"
 	"net"
 	"sync"
@@ -34,13 +34,11 @@ type relay struct {
 	tunLock sync.RWMutex       // Mutex to protect the tunnel map
 
 	// Network layer fields
-	sock     net.Conn   // Network connection to the iris node
-	sockLock sync.Mutex // Mutex to atomise message sending
+	sock     net.Conn          // Network connection to the iris node
+	sockBuf  *bufio.ReadWriter // Buffered access to the network socket
+	sockLock sync.Mutex        // Mutex to atomise message sending
 
-	outVarBuf []byte // Buffer for variable int encoding
-	inByteBuf []byte // Buffer for byte decoding
-	inVarBuf  []byte // Buffer for variable int decoding
-
+	// Bookkeeping fields
 	init chan struct{}   // Init channel to receive a success signal
 	quit chan chan error // Quit channel to synchronize receiver termination
 }
@@ -65,11 +63,9 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 		tunLive: make(map[uint64]*tunnel),
 
 		// Network layer
-		sock:      sock,
-		outVarBuf: make([]byte, binary.MaxVarintLen64),
-		inByteBuf: make([]byte, 1),
-		inVarBuf:  make([]byte, binary.MaxVarintLen64),
-		quit:      make(chan chan error),
+		sock:    sock,
+		sockBuf: bufio.NewReadWriter(bufio.NewReader(sock), bufio.NewWriter(sock)),
+		quit:    make(chan chan error),
 	}
 	// Initialize the connection and wait for a confirmation
 	if err := rel.sendInit(app); err != nil {
@@ -131,12 +127,7 @@ func (r *relay) Request(app string, req []byte, timeout int) ([]byte, error) {
 	// Retrieve the results or time out
 	select {
 	case <-time.After(time.Duration(timeout) * time.Millisecond):
-		err := &relayError{
-			message:   fmt.Sprintf("iris: no reply within %d ms", timeout),
-			temporary: true,
-			timeout:   true,
-		}
-		return nil, err
+		return nil, timeError(fmt.Errorf("iris: no reply within %d ms", timeout))
 	case rep := <-reqCh:
 		return rep, nil
 	}

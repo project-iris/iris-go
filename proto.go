@@ -12,7 +12,6 @@
 package iris
 
 import (
-	"encoding/binary"
 	"fmt"
 )
 
@@ -38,12 +37,8 @@ var relayVersion = "v1.0a"
 
 // Serializes a single byte into the relay.
 func (r *relay) sendByte(data byte) error {
-	if n, err := r.sock.Write([]byte{data}); n != 1 || err != nil {
-		return &relayError{
-			message:   err.Error(),
-			temporary: false,
-			timeout:   false,
-		}
+	if err := r.sockBuf.WriteByte(data); err != nil {
+		return permError(err)
 	}
 	return nil
 }
@@ -59,15 +54,18 @@ func (r *relay) sendBool(data bool) error {
 
 // Serializes a variable int into the relay.
 func (r *relay) sendVarint(data uint64) error {
-	size := binary.PutUvarint(r.outVarBuf, data)
-	if n, err := r.sock.Write(r.outVarBuf[:size]); n != size || err != nil {
-		return &relayError{
-			message:   err.Error(),
-			temporary: false,
-			timeout:   false,
+	for {
+		if data > 127 {
+			// Internalt byte, set the continuation flag and send
+			if err := r.sendByte(byte(128 + data%128)); err != nil {
+				return err
+			}
+			data /= 128
+		} else {
+			// Final byte, send and return
+			return r.sendByte(byte(data))
 		}
 	}
-	return nil
 }
 
 // Serializes a length-tagged binary array into the relay.
@@ -75,12 +73,8 @@ func (r *relay) sendBinary(data []byte) error {
 	if err := r.sendVarint(uint64(len(data))); err != nil {
 		return err
 	}
-	if n, err := r.sock.Write([]byte(data)); n != len(data) || err != nil {
-		return &relayError{
-			message:   err.Error(),
-			temporary: false,
-			timeout:   false,
-		}
+	if n, err := r.sockBuf.Write([]byte(data)); n != len(data) || err != nil {
+		return permError(err)
 	}
 	return nil
 }
@@ -88,6 +82,14 @@ func (r *relay) sendBinary(data []byte) error {
 // Serializes a length-tagged string into the relay.
 func (r *relay) sendString(data string) error {
 	return r.sendBinary([]byte(data))
+}
+
+// Flushes the output buffer into the network stream.
+func (r *relay) sendFlush() error {
+	if err := r.sockBuf.Flush(); err != nil {
+		return permError(err)
+	}
+	return nil
 }
 
 // Assembles and serializes an init packet into the relay.
@@ -98,7 +100,10 @@ func (r *relay) sendInit(app string) error {
 	if err := r.sendString(relayVersion); err != nil {
 		return err
 	}
-	return r.sendString(app)
+	if err := r.sendString(app); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends an application broadcast message into the relay.
@@ -112,7 +117,10 @@ func (r *relay) sendBroadcast(app string, msg []byte) error {
 	if err := r.sendString(app); err != nil {
 		return err
 	}
-	return r.sendBinary(msg)
+	if err := r.sendBinary(msg); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a request message into the relay.
@@ -132,7 +140,10 @@ func (r *relay) sendRequest(reqId uint64, app string, req []byte, time int) erro
 	if err := r.sendBinary(req); err != nil {
 		return err
 	}
-	return r.sendVarint(uint64(time))
+	if err := r.sendVarint(uint64(time)); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a reply message into the relay.
@@ -146,7 +157,10 @@ func (r *relay) sendReply(reqId uint64, rep []byte) error {
 	if err := r.sendVarint(reqId); err != nil {
 		return err
 	}
-	return r.sendBinary(rep)
+	if err := r.sendBinary(rep); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a topic subscription message into the relay.
@@ -157,7 +171,10 @@ func (r *relay) sendSubscribe(topic string) error {
 	if err := r.sendByte(opSub); err != nil {
 		return err
 	}
-	return r.sendString(topic)
+	if err := r.sendString(topic); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a topic publish message into the relay.
@@ -171,7 +188,10 @@ func (r *relay) sendPublish(topic string, msg []byte) error {
 	if err := r.sendString(topic); err != nil {
 		return err
 	}
-	return r.sendBinary(msg)
+	if err := r.sendBinary(msg); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a topic unsubscription message into the relay.
@@ -182,14 +202,21 @@ func (r *relay) sendUnsubscribe(topic string) error {
 	if err := r.sendByte(opUnsub); err != nil {
 		return err
 	}
-	return r.sendString(topic)
+	if err := r.sendString(topic); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a close message into the relay.
 func (r *relay) sendClose() error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
-	return r.sendByte(opClose)
+
+	if err := r.sendByte(opClose); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a tunneling request into the relay.
@@ -206,7 +233,10 @@ func (r *relay) sendTunnelRequest(tunId uint64, app string, time int) error {
 	if err := r.sendString(app); err != nil {
 		return err
 	}
-	return r.sendVarint(uint64(time))
+	if err := r.sendVarint(uint64(time)); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends the acknowledgement for a tunneling request into the relay.
@@ -220,7 +250,10 @@ func (r *relay) sendTunnelReply(tmpId, tunId uint64) error {
 	if err := r.sendVarint(tmpId); err != nil {
 		return err
 	}
-	return r.sendVarint(tunId)
+	if err := r.sendVarint(tunId); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a tunnel data message into the relay.
@@ -234,7 +267,10 @@ func (r *relay) sendTunnelData(tunId uint64, msg []byte) error {
 	if err := r.sendVarint(tunId); err != nil {
 		return err
 	}
-	return r.sendBinary(msg)
+	if err := r.sendBinary(msg); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a tunnel data poll into the relay.
@@ -245,7 +281,10 @@ func (r *relay) sendTunnelPoll(tunId uint64) error {
 	if err := r.sendByte(opTunPoll); err != nil {
 		return err
 	}
-	return r.sendVarint(tunId)
+	if err := r.sendVarint(tunId); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Atomically sends a tunnel termination message into the relay.
@@ -256,19 +295,19 @@ func (r *relay) sendTunnelClose(tunId uint64) error {
 	if err := r.sendByte(opTunClose); err != nil {
 		return err
 	}
-	return r.sendVarint(tunId)
+	if err := r.sendVarint(tunId); err != nil {
+		return err
+	}
+	return r.sendFlush()
 }
 
 // Retrieves a single byte from the relay.
 func (r *relay) recvByte() (byte, error) {
-	if n, err := r.sock.Read(r.inByteBuf); n != 1 || err != nil {
-		return 0, &relayError{
-			message:   err.Error(),
-			temporary: false,
-			timeout:   false,
-		}
+	b, err := r.sockBuf.ReadByte()
+	if err != nil {
+		return 0, permError(err)
 	}
-	return r.inByteBuf[0], nil
+	return b, nil
 }
 
 // Retrieves a boolean from the relay.
@@ -282,30 +321,22 @@ func (r *relay) recvBool() (bool, error) {
 
 // Retrieves a variable int from the relay.
 func (r *relay) recvVarint() (uint64, error) {
-	// Retrieve the varint bytes one at a time
-	index := 0
+	var num uint64
 	for {
 		// Retreive the next byte of the varint
 		b, err := r.recvByte()
 		if err != nil {
-			return 0, err
+			return 0, permError(err)
 		}
-		// Save it and terminate loop if last byte
-		r.inVarBuf[index] = b
-		index++
-		if b&0x80 == 0 {
+		// Save it and terminate if last byte
+		if b > 127 {
+			num += uint64(b - 128)
+		} else {
+			num += uint64(b)
 			break
 		}
 	}
-	if num, n := binary.Uvarint(r.inVarBuf[:index]); n <= 0 {
-		return 0, &relayError{
-			message:   fmt.Sprintf("iris: protocol violation: invalid varint %v", r.inVarBuf[:index]),
-			temporary: false,
-			timeout:   false,
-		}
-	} else {
-		return num, nil
-	}
+	return num, nil
 }
 
 // Retrieves a length-tagged binary array from the relay.
@@ -315,8 +346,8 @@ func (r *relay) recvBinary() ([]byte, error) {
 		return nil, err
 	}
 	data := make([]byte, size)
-	if n, err := r.sock.Read(data); n != int(size) || err != nil {
-		return nil, err
+	if n, err := r.sockBuf.Read(data); n != int(size) || err != nil {
+		return nil, permError(err)
 	}
 	return data, nil
 }
@@ -324,13 +355,9 @@ func (r *relay) recvBinary() ([]byte, error) {
 // Retrieves a length-tagged string from the relay.
 func (r *relay) recvString() (string, error) {
 	if data, err := r.recvBinary(); err != nil {
-		return "", &relayError{
-			message:   err.Error(),
-			temporary: false,
-			timeout:   false,
-		}
+		return "", err
 	} else {
-		return string(data), err
+		return string(data), nil
 	}
 }
 
@@ -339,11 +366,7 @@ func (r *relay) procInit() error {
 	if op, err := r.recvByte(); err != nil {
 		return err
 	} else if op != opInit {
-		return &relayError{
-			message:   fmt.Sprintf("protocol violation"),
-			temporary: false,
-			timeout:   false,
-		}
+		return permError(fmt.Errorf("protocol violation"))
 	}
 	return nil
 }
@@ -380,7 +403,7 @@ func (r *relay) procReply() error {
 	return nil
 }
 
-// Retrieves a remote broadcast message from the relay and processes it.
+// Retrieves a remote broadcast message from the relay and notifies the handler.
 func (r *relay) procBroadcast() error {
 	// Retrieve the message parts
 	msg, err := r.recvBinary()
