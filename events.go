@@ -34,13 +34,7 @@ func (r *relay) handleRequest(reqId uint64, req []byte) {
 func (r *relay) handleReply(reqId uint64, rep []byte) {
 	r.reqLock.RLock()
 	defer r.reqLock.RUnlock()
-
-	// Make sure the request is still alive and don't block if dying
-	if ch, ok := r.reqPend[reqId]; ok {
-		ch <- rep
-	} else {
-		log.Printf("iris: stale reply arrived for request #%v.", reqId)
-	}
+	r.reqPend[reqId] <- rep
 }
 
 // Forwards a remote topic publish event to the subscription handler.

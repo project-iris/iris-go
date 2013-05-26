@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"time"
 )
 
 // Message relay between the local app and the local iris node.
@@ -41,6 +40,7 @@ type relay struct {
 	// Bookkeeping fields
 	init chan struct{}   // Init channel to receive a success signal
 	quit chan chan error // Quit channel to synchronize receiver termination
+	term chan struct{}   // Channel to signal termination to blocked go-routines
 }
 
 // Connects to a local relay endpoint on port and logs in with id app.
@@ -66,6 +66,7 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 		sock:    sock,
 		sockBuf: bufio.NewReadWriter(bufio.NewReader(sock), bufio.NewWriter(sock)),
 		quit:    make(chan chan error),
+		term:    make(chan struct{}),
 	}
 	// Initialize the connection and wait for a confirmation
 	if err := rel.sendInit(app); err != nil {
@@ -124,12 +125,16 @@ func (r *relay) Request(app string, req []byte, timeout int) ([]byte, error) {
 	if err := r.sendRequest(reqId, app, req, timeout); err != nil {
 		return nil, err
 	}
-	// Retrieve the results or time out
+	// Retrieve the results or fail if terminating
 	select {
-	case <-time.After(time.Duration(timeout) * time.Millisecond):
-		return nil, timeError(fmt.Errorf("iris: no reply within %d ms", timeout))
+	case <-r.term:
+		return nil, permError(fmt.Errorf("iris: relay terminating"))
 	case rep := <-reqCh:
-		return rep, nil
+		if rep != nil {
+			return rep, nil
+		} else {
+			return nil, timeError(fmt.Errorf("iris: request timed out"))
+		}
 	}
 }
 

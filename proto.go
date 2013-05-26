@@ -56,7 +56,7 @@ func (r *relay) sendBool(data bool) error {
 func (r *relay) sendVarint(data uint64) error {
 	for {
 		if data > 127 {
-			// Internalt byte, set the continuation flag and send
+			// Internal byte, set the continuation flag and send
 			if err := r.sendByte(byte(128 + data%128)); err != nil {
 				return err
 			}
@@ -322,17 +322,17 @@ func (r *relay) recvBool() (bool, error) {
 // Retrieves a variable int from the relay.
 func (r *relay) recvVarint() (uint64, error) {
 	var num uint64
-	for {
+	for i := uint(0); ; i++ {
 		// Retreive the next byte of the varint
 		b, err := r.recvByte()
 		if err != nil {
-			return 0, permError(err)
+			return 0, err
 		}
 		// Save it and terminate if last byte
 		if b > 127 {
-			num += uint64(b - 128)
+			num += uint64(b-128) << (7 * i)
 		} else {
-			num += uint64(b)
+			num += uint64(b) << (7 * i)
 			break
 		}
 	}
@@ -346,8 +346,13 @@ func (r *relay) recvBinary() ([]byte, error) {
 		return nil, err
 	}
 	data := make([]byte, size)
-	if n, err := r.sockBuf.Read(data); n != int(size) || err != nil {
-		return nil, permError(err)
+	read := uint64(0)
+	for read < size {
+		if n, err := r.sockBuf.Read(data[read:]); err != nil {
+			return nil, err
+		} else {
+			read += uint64(n)
+		}
 	}
 	return data, nil
 }
@@ -389,28 +394,32 @@ func (r *relay) procRequest() error {
 
 // Retrieves a remote reply from the relay and processes it.
 func (r *relay) procReply() error {
-	// Retrieve the message parts
 	reqId, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	rep, err := r.recvBinary()
+	timeout, err := r.recvBool()
 	if err != nil {
 		return err
 	}
-	// Pass the reply to the pending handler routine
-	go r.handleReply(reqId, rep)
+	if timeout {
+		go r.handleReply(reqId, nil)
+	} else {
+		rep, err := r.recvBinary()
+		if err != nil {
+			return err
+		}
+		go r.handleReply(reqId, rep)
+	}
 	return nil
 }
 
 // Retrieves a remote broadcast message from the relay and notifies the handler.
 func (r *relay) procBroadcast() error {
-	// Retrieve the message parts
 	msg, err := r.recvBinary()
 	if err != nil {
 		return err
 	}
-	// Pass the request to the iris connection
 	go r.handleBroadcast(msg)
 	return nil
 }
@@ -545,8 +554,11 @@ func (r *relay) process() {
 	if err != nil {
 		go r.handleDrop(err)
 	}
-	// Close the socket and return error (if any) when requested
+	// Close the socket and signal termination to all blocked threads
 	err = r.sock.Close()
+	close(r.term)
+
+	// Wait for termination sync
 	errc := <-r.quit
 	errc <- err
 }

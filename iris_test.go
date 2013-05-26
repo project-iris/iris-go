@@ -59,7 +59,7 @@ func (b *broadcaster) HandleTunnel(tun Tunnel) {
 }
 
 func (b *broadcaster) HandleDrop(reason error) {
-	panic("Connection dropped")
+	panic("Connection dropped on broadcast handler")
 }
 
 // Tests broadcasting and correct connection.
@@ -74,6 +74,8 @@ func TestBroadcast(t *testing.T) {
 		if err != nil {
 			t.Errorf("test %d: connection failed: %v.", i, err)
 		}
+		defer conn.Close()
+
 		// Try a few self broadcasts
 		for rep := 0; rep < 10; rep++ {
 			out := []byte{byte(i + rep), byte(i + rep + 1), byte(i + rep + 2)}
@@ -92,6 +94,75 @@ func TestBroadcast(t *testing.T) {
 				}
 			}
 		}
+		// Tear down the connection
+		conn.Close()
+	}
+}
+
+// Connection handler for the req/rep tests.
+type requester struct {
+	sleep int
+}
+
+func (r *requester) HandleBroadcast(msg []byte) {
+	panic("Broadcast passed to request handler")
+}
+
+func (r *requester) HandleRequest(req []byte) []byte {
+	time.Sleep(time.Duration(r.sleep) * time.Millisecond)
+	return req
+}
+
+func (r *requester) HandleTunnel(tun Tunnel) {
+	panic("Inbound tunnel on request handler")
+}
+
+func (r *requester) HandleDrop(reason error) {
+	panic("Connection dropped on request handler")
+}
+
+// Tests the request-reply scheme.
+func TestReqRep(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		handler := &requester{
+			sleep: 50,
+		}
+		// Set up the connection
+		app := fmt.Sprintf("test-reqrep-%d", i)
+		conn, err := Connect(relayPort, app, handler)
+		if err != nil {
+			t.Errorf("test %d: connection failed: %v.", i, err)
+		}
+		defer conn.Close()
+
+		// Verify concurrent requests
+		done := make(chan struct{}, 25)
+		for rep := 0; rep < cap(done); rep++ {
+			go func() {
+				req := []byte(fmt.Sprintf("request-%d-%d", i, rep))
+				res, err := conn.Request(app, req, 250)
+				if err != nil {
+					t.Errorf("test %d, rep %d: request failed: %v.", i, rep, err)
+				}
+				if bytes.Compare(req, res) != 0 {
+					t.Errorf("test %d, rep %d: reply mismatch: have %v, want %v.", i, rep, res, req)
+				}
+				done <- struct{}{}
+			}()
+		}
+		for rep := 0; rep < cap(done); rep++ {
+			<-done
+		}
+		// Verify timeouts
+		req := []byte(fmt.Sprintf("request-%d-timeout", i))
+		rep, err := conn.Request(app, req, 25)
+		if err == nil {
+			t.Errorf("test %d: timeout expected, nil error received, reply: %v.", i, string(rep))
+		} else if !err.(Error).Timeout() {
+			t.Errorf("test %d: error mismatch, have %v, want timeout.", i, err)
+		}
+		// Tear down the connection
+		conn.Close()
 	}
 }
 
@@ -136,7 +207,7 @@ func TestPubSub(t *testing.T) {
 						} else if bytes.Compare(msg, out) != 0 {
 							t.Errorf("test %d, sub %d, pub %d: message mismatch: have %v, want %v.", i, sub, pub, msg, out)
 						}
-					case <-time.After(25 * time.Millisecond):
+					case <-time.After(50 * time.Millisecond):
 						t.Errorf("test %d, sub %d, pub %d: publish timed out", i, sub, pub)
 					}
 				}
@@ -153,11 +224,13 @@ func TestPubSub(t *testing.T) {
 				select {
 				case msg := <-handler.msgs:
 					t.Errorf("test %d, sub %d: message arrived after unsubscribe: %v.", i, sub, msg)
-				case <-time.After(25 * time.Millisecond):
+				case <-time.After(50 * time.Millisecond):
 					// Ok, publish didn't arrive
 				}
 			}
 		}
+		// Tear down the connection
+		conn.Close()
 	}
 }
 
@@ -229,10 +302,65 @@ func BenchmarkBroadcastThroughput(b *testing.B) {
 	b.ResetTimer()
 	go func() {
 		for i := 0; i < b.N; i++ {
-			conn.Broadcast(app, []byte{byte(i)})
+			if err := conn.Broadcast(app, []byte{byte(i)}); err != nil {
+				fmt.Printf("broadcast failed: %v.", err)
+			}
 		}
 	}()
 	for i := 0; i < b.N; i++ {
 		<-handler.msgs
+	}
+}
+
+// Benchmarks the passthrough of a single request-reply.
+func BenchmarkReqRep(b *testing.B) {
+	// Configure the benchmark
+	app := fmt.Sprintf("bench-reqrep")
+	handler := &requester{
+		sleep: 0,
+	}
+	// Set up the connection
+	conn, err := Connect(relayPort, app, handler)
+	if err != nil {
+		b.Errorf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Reset timer and benchmark the message transfer
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := conn.Request(app, []byte{byte(i)}, 1000); err != nil {
+			b.Errorf("request failed: %v.", err)
+		}
+	}
+}
+
+// Benchmarks parallel request-reply.
+func BenchmarkReqRepThroughput(b *testing.B) {
+	// Configure the benchmark
+	app := fmt.Sprintf("bench-reqrep")
+	handler := &requester{
+		sleep: 0,
+	}
+	// Set up the connection
+	conn, err := Connect(relayPort, app, handler)
+	if err != nil {
+		b.Errorf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Reset timer and benchmark the message transfer
+	b.ResetTimer()
+	done := make(chan struct{}, b.N)
+	for i := 0; i < b.N; i++ {
+		go func() {
+			if _, err := conn.Request(app, []byte{byte(i)}, 1000); err != nil {
+				b.Errorf("request failed: %v.", err)
+			}
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < b.N; i++ {
+		<-done
 	}
 }
