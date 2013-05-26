@@ -186,7 +186,7 @@ func TestPubSub(t *testing.T) {
 		}
 		// Repeat for a handfull of subscriptions
 		for sub := 0; sub < 10; sub++ {
-			// Subscribe
+			// Subscribe (and sleep a bit for state propagation)
 			topic := fmt.Sprintf("test-topic-%d", sub)
 			handler := &subscriber{
 				msgs: make(chan []byte, 64),
@@ -194,6 +194,8 @@ func TestPubSub(t *testing.T) {
 			if err := conn.Subscribe(topic, handler); err != nil {
 				t.Errorf("test %d, sub %d: failed to subscribe: %v", i, sub, err)
 			}
+			time.Sleep(10 * time.Millisecond)
+
 			// Publish
 			for pub := 0; pub < 10; pub++ {
 				out := []byte{byte(i), byte(sub), byte(pub)}
@@ -207,7 +209,7 @@ func TestPubSub(t *testing.T) {
 						} else if bytes.Compare(msg, out) != 0 {
 							t.Errorf("test %d, sub %d, pub %d: message mismatch: have %v, want %v.", i, sub, pub, msg, out)
 						}
-					case <-time.After(50 * time.Millisecond):
+					case <-time.After(150 * time.Millisecond):
 						t.Errorf("test %d, sub %d, pub %d: publish timed out", i, sub, pub)
 					}
 				}
@@ -216,6 +218,8 @@ func TestPubSub(t *testing.T) {
 			if err := conn.Unsubscribe(topic); err != nil {
 				t.Errorf("test %d, sub %d: failed to unsubscribe: %v", i, sub, err)
 			}
+			time.Sleep(10 * time.Millisecond)
+
 			// Make sure publish doesn't pass
 			out := []byte{byte(i), byte(sub)}
 			if err := conn.Publish(topic, out); err != nil {
@@ -362,5 +366,71 @@ func BenchmarkReqRepThroughput(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		<-done
+	}
+}
+
+// Benchmarks the passthrough of a single message publish.
+func BenchmarkPubSub(b *testing.B) {
+	// Configure the benchmark
+	app := fmt.Sprintf("bench-pubsub")
+	topic := fmt.Sprintf("bench-topic")
+	handler := &subscriber{
+		msgs: make(chan []byte, 64),
+	}
+	// Set up the connection
+	conn, err := Connect(relayPort, app, nil)
+	if err != nil {
+		b.Errorf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Subscribe (and sleep a bit for state propagation)
+	if err := conn.Subscribe(topic, handler); err != nil {
+		b.Errorf("failed to subscribe: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Reset timer and time sync publish
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := conn.Publish(topic, []byte{byte(i)}); err != nil {
+			b.Errorf("iter %d: failed to publish: %v.", i, err)
+		}
+		<-handler.msgs
+	}
+}
+
+// Benchmarks the passthrough of a stream of publishes.
+func BenchmarkPubSubThroughput(b *testing.B) {
+	// Configure the benchmark
+	app := fmt.Sprintf("bench-pubsub")
+	topic := fmt.Sprintf("bench-topic")
+	handler := &subscriber{
+		msgs: make(chan []byte, 64),
+	}
+	// Set up the connection
+	conn, err := Connect(relayPort, app, nil)
+	if err != nil {
+		b.Errorf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Subscribe (and sleep a bit for state propagation)
+	if err := conn.Subscribe(topic, handler); err != nil {
+		b.Errorf("failed to subscribe: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Reset timer and time sync publish
+	b.ResetTimer()
+	go func() {
+		for i := 0; i < b.N; i++ {
+			if err := conn.Publish(topic, []byte{byte(i)}); err != nil {
+				b.Errorf("iter %d: failed to publish: %v.", i, err)
+			}
+		}
+	}()
+	for i := 0; i < b.N; i++ {
+		<-handler.msgs
 	}
 }
