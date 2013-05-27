@@ -11,15 +11,12 @@ package iris
 
 import (
 	"fmt"
-	"sync"
+	"log"
 	"time"
 )
 
-// Error to return on a closed connection or tunnel.
-var tunnelClosedError = permError(fmt.Errorf("iris: tunnel terminating"))
-
-// Error to return on a timed-out tunnel operation.
-var tunnelTimeError = timeError(fmt.Errorf("iris: tunnel operation timed out"))
+// Input buffer size for flow control.
+var tunnelBuffer = 128
 
 // Ordered message stream between two endpoints.
 type tunnel struct {
@@ -27,16 +24,13 @@ type tunnel struct {
 	rel *relay // Message relay to the iris node
 
 	// Throttling fields
-	pending chan struct{} // Limits the number of sends to the window size
-	acked   uint64        // Sequence number of the last acked message
-	lock    sync.Mutex    // Sync primitive to serialize parallel acks
-
-	polled bool        // Specifies whether a receive was already sent and data is imminent
-	queued chan []byte // Message queued for delivery
+	itoa chan []byte   // Iris to application message buffer
+	atoi chan struct{} // Application to Iris pending ack buffer
 
 	// Bookkeeping fields
-	init chan struct{} // Initialization channel for outbount tunnels
-	quit chan struct{} // Quit channel to signal tunnel termination
+	init chan bool       // Initialization channel for outbount tunnels
+	quit chan chan error // Quit channel to synchronize tunnel termination
+	term chan struct{}   // Channel to signal termination to blocked go-routines
 }
 
 // Implements iris.Tunnel.Send.
@@ -55,11 +49,11 @@ func (t *tunnel) Send(msg []byte, timeout int) error {
 	}
 	// Query for a send allowance
 	select {
-	case <-t.quit:
-		return tunnelClosedError
+	case <-t.term:
+		return permError(fmt.Errorf("tunnel closed"))
 	case <-after:
-		return tunnelTimeError
-	case t.pending <- struct{}{}:
+		return timeError(fmt.Errorf("send timed out"))
+	case t.atoi <- struct{}{}:
 		return t.rel.sendTunnelData(t.id, msg)
 	}
 }
@@ -70,52 +64,34 @@ func (t *tunnel) Recv(timeout int) ([]byte, error) {
 	if timeout < 0 {
 		panic(fmt.Sprintf("iris: invalid timeout %d < 0", timeout))
 	}
-	// Check for leftovers from a previous timed-out recieve
-	if t.polled {
-		var after <-chan time.Time
-		if timeout > 0 {
-			after = time.After(time.Duration(timeout) * time.Millisecond)
-		}
-		select {
-		case <-t.quit:
-			return nil, tunnelClosedError
-		case <-after:
-			return nil, tunnelTimeError
-		case msg := <-t.queued:
-			// Message arrived, clear poll flag and return
-			t.polled = false
-			return msg, nil
-		}
-	}
-	// No leftovers to be queried, send a poll
-	if err := t.rel.sendTunnelPoll(t.id); err != nil {
-		return nil, err
-	}
-	// Create (the possibly nil) timeout signaller and wait for the reply
+	// Create the timeout signaller
 	var after <-chan time.Time
 	if timeout > 0 {
 		after = time.After(time.Duration(timeout) * time.Millisecond)
 	}
+	// Retrieve the next message
 	select {
-	case <-t.quit:
-		return nil, tunnelClosedError
+	case <-t.term:
+		return nil, permError(fmt.Errorf("iris: tunnel closed"))
 	case <-after:
-		// Poll timed out, set polled flag to prevent poll resend and return
-		t.polled = true
-		return nil, tunnelTimeError
-	case msg := <-t.queued:
+		return nil, timeError(fmt.Errorf("iris: recv timed out"))
+	case msg := <-t.itoa:
+		// Message arrived, ack and return
+		go func() {
+			if err := t.rel.sendTunnelAck(t.id); err != nil {
+				log.Printf("iris: tunnel ack failed: %v.", err)
+			}
+		}()
 		return msg, nil
 	}
 }
 
 // Implements iris.Tunnel.Close.
 func (t *tunnel) Close() error {
-	// Send a graceful close to the relay node
 	return t.rel.sendTunnelClose(t.id)
 }
 
-// Initiates a new tunnel to a remote app. If timeout is reached before the init
-// reply arrives the tunnel is discarded.
+// Initiates a new tunnel to a remote app. Timeouts are handled framework side!
 func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 	// Sanity check on the arguments
 	if len(app) == 0 {
@@ -128,18 +104,20 @@ func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 	r.tunLock.Lock()
 	tunId := r.tunIdx
 	tun := &tunnel{
-		id:     tunId,
-		rel:    r,
-		queued: make(chan []byte, 1),
-		init:   make(chan struct{}, 1),
-		quit:   make(chan struct{}),
+		id:  tunId,
+		rel: r,
+
+		atoi: make(chan struct{}, tunnelBuffer),
+		init: make(chan bool),
+		quit: make(chan chan error),
+		term: make(chan struct{}),
 	}
 	r.tunIdx++
 	r.tunLive[tunId] = tun
 	r.tunLock.Unlock()
 
 	// Send the tunneling request and clean up in case of a failure
-	if err := r.sendTunnelRequest(tunId, app, timeout); err != nil {
+	if err := r.sendTunnelRequest(tunId, app, tunnelBuffer, timeout); err != nil {
 		r.tunLock.Lock()
 		delete(r.tunLive, tunId)
 		r.tunLock.Unlock()
@@ -147,40 +125,50 @@ func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 	}
 	// Wait for tunneling completion or a timeout
 	select {
-	case <-tun.init:
-		// All ok, return the new tunnel
-		return tun, nil
-	case <-time.After(time.Duration(timeout) * time.Millisecond):
-		// Timeout, remove the tunnel leftover
+	case init := <-tun.init:
+		if init {
+			return tun, nil
+		} else {
+			// Tunneling timed out, clean up
+			r.tunLock.Lock()
+			delete(r.tunLive, tunId)
+			r.tunLock.Unlock()
+
+			// Report timeout failure
+			return nil, timeError(fmt.Errorf("tunneling timed out"))
+		}
+	case <-r.term:
+		// Relay terminating, clean up
 		r.tunLock.Lock()
 		delete(r.tunLive, tunId)
 		r.tunLock.Unlock()
 
 		// Error out with a temporary failure
-		return nil, tunnelTimeError
+		return nil, permError(fmt.Errorf("relay terminating"))
 	}
 }
 
 // Accepts an incoming tunneling request from a remote app, assembling a local
 // tunnel with the given send window and replies to the relay with the final
 // permanent tunnel id.
-func (r *relay) acceptTunnel(tmpId uint64, win int) (Tunnel, error) {
+func (r *relay) acceptTunnel(tmpId uint64, buf int) (Tunnel, error) {
 	// Create the local tunnel endpoint
 	r.tunLock.Lock()
 	tunId := r.tunIdx
 	tun := &tunnel{
-		id:      tunId,
-		rel:     r,
-		pending: make(chan struct{}, win),
-		queued:  make(chan []byte, 1),
-		quit:    make(chan struct{}),
+		id:   tunId,
+		rel:  r,
+		itoa: make(chan []byte, buf),
+		atoi: make(chan struct{}, tunnelBuffer),
+		quit: make(chan chan error),
+		term: make(chan struct{}),
 	}
 	r.tunIdx++
 	r.tunLive[tunId] = tun
 	r.tunLock.Unlock()
 
 	// Acknowledge the tunnel creation to the relay
-	if err := r.sendTunnelReply(tmpId, tunId); err != nil {
+	if err := r.sendTunnelReply(tmpId, tunId, tunnelBuffer); err != nil {
 		r.tunLock.Lock()
 		delete(r.tunLive, tunId)
 		r.tunLock.Unlock()
@@ -190,29 +178,36 @@ func (r *relay) acceptTunnel(tmpId uint64, win int) (Tunnel, error) {
 	return tun, nil
 }
 
-// Finalizes the successfull tunneling initiation by setting the relay window.
-func (t *tunnel) handleInit(win int) {
-	t.pending = make(chan struct{}, win)
-	t.init <- struct{}{}
+// Finalizes the tunneling initiation by setting the output buffer or signalling
+// a timeout.
+func (t *tunnel) handleInit(buf int, timeout bool) {
+	if !timeout {
+		t.itoa = make(chan []byte, buf)
+	}
+	t.init <- !timeout
 }
 
-// Acknowledges the sent messages till ack, allowing more to proceed.
-func (t *tunnel) handleAck(ack uint64) {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	for i := 0; i < int(ack-t.acked); i++ {
-		<-t.pending
+// Acknowledges one message as sent and allows further transfers.
+func (t *tunnel) handleAck() {
+	select {
+	case <-t.atoi:
+		// All ok
+	default:
+		panic("protocol violation")
 	}
-	t.acked = ack
 }
 
 // Places the received data into the local queue for delivery.
 func (t *tunnel) handleData(msg []byte) {
-	t.queued <- msg
+	select {
+	case t.itoa <- msg:
+		// All ok
+	default:
+		panic("protocol violation")
+	}
 }
 
 // Handles the gracefull remote closure of the tunnel.
 func (t *tunnel) handleClose() {
-	close(t.quit)
+	close(t.term)
 }

@@ -26,9 +26,8 @@ const (
 	opClose
 	opTunReq
 	opTunRep
-	opTunAck
 	opTunData
-	opTunPoll
+	opTunAck
 	opTunClose
 )
 
@@ -220,7 +219,7 @@ func (r *relay) sendClose() error {
 }
 
 // Atomically sends a tunneling request into the relay.
-func (r *relay) sendTunnelRequest(tunId uint64, app string, time int) error {
+func (r *relay) sendTunnelRequest(tunId uint64, app string, buf int, time int) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
 
@@ -233,6 +232,9 @@ func (r *relay) sendTunnelRequest(tunId uint64, app string, time int) error {
 	if err := r.sendString(app); err != nil {
 		return err
 	}
+	if err := r.sendVarint(uint64(buf)); err != nil {
+		return err
+	}
 	if err := r.sendVarint(uint64(time)); err != nil {
 		return err
 	}
@@ -240,7 +242,7 @@ func (r *relay) sendTunnelRequest(tunId uint64, app string, time int) error {
 }
 
 // Atomically sends the acknowledgement for a tunneling request into the relay.
-func (r *relay) sendTunnelReply(tmpId, tunId uint64) error {
+func (r *relay) sendTunnelReply(tmpId, tunId uint64, buf int) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
 
@@ -251,6 +253,9 @@ func (r *relay) sendTunnelReply(tmpId, tunId uint64) error {
 		return err
 	}
 	if err := r.sendVarint(tunId); err != nil {
+		return err
+	}
+	if err := r.sendVarint(uint64(buf)); err != nil {
 		return err
 	}
 	return r.sendFlush()
@@ -273,12 +278,12 @@ func (r *relay) sendTunnelData(tunId uint64, msg []byte) error {
 	return r.sendFlush()
 }
 
-// Atomically sends a tunnel data poll into the relay.
-func (r *relay) sendTunnelPoll(tunId uint64) error {
+// Atomically sends a tunnel data acknowledgement into the relay.
+func (r *relay) sendTunnelAck(tunId uint64) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
 
-	if err := r.sendByte(opTunPoll); err != nil {
+	if err := r.sendByte(opTunAck); err != nil {
 		return err
 	}
 	if err := r.sendVarint(tunId); err != nil {
@@ -442,49 +447,37 @@ func (r *relay) procPublish() error {
 
 // Retrieves a remote tunneling request from the relay and processes it.
 func (r *relay) procTunnelRequest() error {
-	// Retrieve the message parts
 	tunId, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	win, err := r.recvVarint()
+	buf, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	// Handle the message
-	go r.handleTunnelRequest(tunId, int(win))
+	go r.handleTunnelRequest(tunId, int(buf))
 	return nil
 }
 
 // Retrieves a remote tunneling request from the relay and processes it.
 func (r *relay) procTunnelReply() error {
-	// Retrieve the message parts
 	tunId, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	win, err := r.recvVarint()
+	timeout, err := r.recvBool()
 	if err != nil {
 		return err
 	}
-	// Handle the message
-	go r.handleTunnelReply(tunId, int(win))
-	return nil
-}
-
-// Retrieves a remote tunnel message ack and processes it.
-func (r *relay) procTunnelAck() error {
-	// Retrieve the message parts
-	tunId, err := r.recvVarint()
-	if err != nil {
-		return err
+	if timeout {
+		go r.handleTunnelReply(tunId, 0, true)
+	} else {
+		buf, err := r.recvVarint()
+		if err != nil {
+			return err
+		}
+		go r.handleTunnelReply(tunId, int(buf), false)
 	}
-	ack, err := r.recvVarint()
-	if err != nil {
-		return err
-	}
-	// Handle the message
-	go r.handleTunnelAck(tunId, ack)
 	return nil
 }
 
@@ -501,6 +494,18 @@ func (r *relay) procTunnelData() error {
 	}
 	// Handle the message
 	go r.handleTunnelData(tunId, msg)
+	return nil
+}
+
+// Retrieves a remote tunnel message ack and processes it.
+func (r *relay) procTunnelAck() error {
+	// Retrieve the message parts
+	tunId, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	// Handle the message
+	go r.handleTunnelAck(tunId)
 	return nil
 }
 
@@ -525,12 +530,12 @@ func (r *relay) process() {
 		// Retrieve the next opcode and call the specific handler for the rest
 		if op, err = r.recvByte(); err == nil {
 			switch op {
+			case opBcast:
+				err = r.procBroadcast()
 			case opReq:
 				err = r.procRequest()
 			case opRep:
 				err = r.procReply()
-			case opBcast:
-				err = r.procBroadcast()
 			case opPub:
 				err = r.procPublish()
 			case opTunReq:

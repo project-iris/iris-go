@@ -54,12 +54,20 @@ func (r *relay) handlePublish(topic string, msg []byte) {
 
 // Notifies the application of the relay link going down.
 func (r *relay) handleDrop(reason error) {
+	// Notify the app of the drop
 	r.handler.HandleDrop(reason)
+
+	// Close all open tunnels
+	r.tunLock.Lock()
+	for tunId, _ := range r.tunLive {
+		go r.handleTunnelClose(tunId)
+	}
+	r.tunLock.Unlock()
 }
 
 // Opens a new local tunnel endpoint and binds it to the remote side.
-func (r *relay) handleTunnelRequest(tmpId uint64, win int) {
-	if tun, err := r.acceptTunnel(tmpId, win); err == nil {
+func (r *relay) handleTunnelRequest(tmpId uint64, buf int) {
+	if tun, err := r.acceptTunnel(tmpId, buf); err == nil {
 		r.handler.HandleTunnel(tun)
 	} else {
 		log.Printf("iris: failed to accept inbound tunnel: %v.", err)
@@ -67,28 +75,28 @@ func (r *relay) handleTunnelRequest(tmpId uint64, win int) {
 }
 
 // Forwards the tunneling reply to the requested tunnel.
-func (r *relay) handleTunnelReply(tunId uint64, win int) {
+func (r *relay) handleTunnelReply(tunId uint64, buf int, timeout bool) {
+	// Retrieve the tunnel
 	r.tunLock.RLock()
-	defer r.tunLock.RUnlock()
+	tun := r.tunLive[tunId]
+	r.tunLock.RUnlock()
 
-	// Make sure the tunnel is still alive
-	if tun, ok := r.tunLive[tunId]; ok {
-		tun.handleInit(win)
-	} else {
-		log.Printf("iris: stale reply arrived for tunnelling request #%v.", tunId)
-	}
+	// Finalize initialization
+	tun.handleInit(buf, timeout)
 }
 
 // Forwards a tunnel send acknowledgement to the specific tunnel.
-func (r *relay) handleTunnelAck(tunId uint64, ack uint64) {
-	r.tunLock.Lock()
-	defer r.tunLock.Unlock()
+func (r *relay) handleTunnelAck(tunId uint64) {
+	// Retrieve the tunnel
+	r.tunLock.RLock()
+	tun, ok := r.tunLive[tunId]
+	r.tunLock.RUnlock()
 
 	// Make sure the tunnel is still alive
-	if tun, ok := r.tunLive[tunId]; ok {
-		tun.handleAck(ack)
+	if ok {
+		tun.handleAck()
 	} else {
-		log.Printf("iris: stale ack for tunnel #%v.", tunId)
+		log.Printf("iris: stale tunnel ack.")
 	}
 }
 

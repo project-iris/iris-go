@@ -238,6 +238,80 @@ func TestPubSub(t *testing.T) {
 	}
 }
 
+// Connection handler for the tunnel tests.
+type tunneler struct {
+	sleep  int
+	closed chan struct{}
+}
+
+func (t *tunneler) HandleBroadcast(msg []byte) {
+	panic("Broadcast passed to tunnel handler")
+}
+
+func (t *tunneler) HandleRequest(req []byte) []byte {
+	panic("Request passed to tunnel handler")
+}
+
+func (t *tunneler) HandleTunnel(tun Tunnel) {
+	for done := false; !done; {
+		if msg, err := tun.Recv(0); err == nil {
+			time.Sleep(time.Duration(t.sleep) * time.Millisecond)
+			if err := tun.Send(msg, 100); err != nil {
+				panic(err)
+			}
+		} else {
+			t.closed <- struct{}{}
+		}
+	}
+}
+
+func (t *tunneler) HandleDrop(reason error) {
+	panic("Connection dropped on tunnel handler")
+}
+
+func TestTunnel(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		handler := &tunneler{
+			sleep:  50,
+			closed: make(chan struct{}),
+		}
+		// Set up the connection
+		app := fmt.Sprintf("test-tunnel-%d", i)
+		conn, err := Connect(relayPort, app, handler)
+		if err != nil {
+			t.Errorf("test %d: connection failed: %v.", i, err)
+		}
+		// Tunnel
+		for j := 0; j < 10; j++ {
+			// Open the tunnel
+			tun, err := conn.Tunnel(app, 250)
+			if err != nil {
+				t.Errorf("test %d, tun %d: tunneling failed: %v.", i, j, err)
+			}
+			// Send a few ping-pong messages
+			for k := 0; k < 10; k++ {
+				out := []byte{byte(i), byte(j), byte(k)}
+				if err := tun.Send(out, 250); err != nil {
+					t.Errorf("test %d, tun %d, msg %d: send failed: %v.", i, j, k, err)
+				}
+				if msg, err := tun.Recv(250); err != nil {
+					t.Errorf("test %d, tun %d, msg %d: recv failed: %v.", i, j, k, err)
+				} else if bytes.Compare(msg, out) != 0 {
+					t.Errorf("test %d, tun %d, msg %d: message mismatch: have %v, want %v.", i, j, k, msg, out)
+				}
+			}
+			// Close the tunnel
+			if err := tun.Close(); err != nil {
+				t.Errorf("test %d, tun %d: close failed: %v.", i, j, err)
+			}
+			// Wait for remote endpoint close event
+			<-handler.closed
+		}
+		// Tear down the connection
+		conn.Close()
+	}
+}
+
 // Benchmarks connection setup
 func BenchmarkConnect(b *testing.B) {
 	for i := 0; i < b.N; i++ {
