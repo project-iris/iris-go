@@ -28,9 +28,8 @@ type tunnel struct {
 	atoi chan struct{} // Application to Iris pending ack buffer
 
 	// Bookkeeping fields
-	init chan bool       // Initialization channel for outbount tunnels
-	quit chan chan error // Quit channel to synchronize tunnel termination
-	term chan struct{}   // Channel to signal termination to blocked go-routines
+	init chan bool     // Initialization channel for outbount tunnels
+	term chan struct{} // Channel to signal termination to blocked go-routines
 }
 
 // Implements iris.Tunnel.Send.
@@ -72,9 +71,9 @@ func (t *tunnel) Recv(timeout int) ([]byte, error) {
 	// Retrieve the next message
 	select {
 	case <-t.term:
-		return nil, permError(fmt.Errorf("iris: tunnel closed"))
+		return nil, permError(fmt.Errorf("tunnel closed"))
 	case <-after:
-		return nil, timeError(fmt.Errorf("iris: recv timed out"))
+		return nil, timeError(fmt.Errorf("recv timeout"))
 	case msg := <-t.itoa:
 		// Message arrived, ack and return
 		go func() {
@@ -88,7 +87,9 @@ func (t *tunnel) Recv(timeout int) ([]byte, error) {
 
 // Implements iris.Tunnel.Close.
 func (t *tunnel) Close() error {
-	return t.rel.sendTunnelClose(t.id)
+	err := t.rel.sendTunnelClose(t.id)
+	<-t.term
+	return err
 }
 
 // Initiates a new tunnel to a remote app. Timeouts are handled framework side!
@@ -109,7 +110,6 @@ func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 
 		atoi: make(chan struct{}, tunnelBuffer),
 		init: make(chan bool),
-		quit: make(chan chan error),
 		term: make(chan struct{}),
 	}
 	r.tunIdx++
@@ -160,7 +160,6 @@ func (r *relay) acceptTunnel(tmpId uint64, buf int) (Tunnel, error) {
 		rel:  r,
 		itoa: make(chan []byte, buf),
 		atoi: make(chan struct{}, tunnelBuffer),
-		quit: make(chan chan error),
 		term: make(chan struct{}),
 	}
 	r.tunIdx++
@@ -209,5 +208,10 @@ func (t *tunnel) handleData(msg []byte) {
 
 // Handles the gracefull remote closure of the tunnel.
 func (t *tunnel) handleClose() {
+	// Block the buffer channels
+	t.itoa = nil
+	t.atoi = nil
+
+	// Signal termination
 	close(t.term)
 }

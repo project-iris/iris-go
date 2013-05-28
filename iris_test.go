@@ -240,7 +240,7 @@ func TestPubSub(t *testing.T) {
 
 // Connection handler for the tunnel tests.
 type tunneler struct {
-	sleep  int
+	opened chan struct{}
 	closed chan struct{}
 }
 
@@ -253,9 +253,9 @@ func (t *tunneler) HandleRequest(req []byte) []byte {
 }
 
 func (t *tunneler) HandleTunnel(tun Tunnel) {
+	t.opened <- struct{}{}
 	for done := false; !done; {
 		if msg, err := tun.Recv(0); err == nil {
-			time.Sleep(time.Duration(t.sleep) * time.Millisecond)
 			if err := tun.Send(msg, 100); err != nil {
 				panic(err)
 			}
@@ -272,7 +272,7 @@ func (t *tunneler) HandleDrop(reason error) {
 func TestTunnel(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		handler := &tunneler{
-			sleep:  50,
+			opened: make(chan struct{}),
 			closed: make(chan struct{}),
 		}
 		// Set up the connection
@@ -288,6 +288,9 @@ func TestTunnel(t *testing.T) {
 			if err != nil {
 				t.Errorf("test %d, tun %d: tunneling failed: %v.", i, j, err)
 			}
+			// Wait for remote tunnel endpoint
+			<-handler.opened
+
 			// Send a few ping-pong messages
 			for k := 0; k < 10; k++ {
 				out := []byte{byte(i), byte(j), byte(k)}
@@ -306,6 +309,14 @@ func TestTunnel(t *testing.T) {
 			}
 			// Wait for remote endpoint close event
 			<-handler.closed
+
+			// Make sure both send and recv fails
+			if err := tun.Send([]byte{0x00}, 100); err == nil {
+				t.Errorf("test %d, tun %d: sent on a closed tunnel.", i, j)
+			}
+			if msg, err := tun.Recv(100); err == nil {
+				t.Errorf("test %d, tun %d: received from a closed tunnel %v.", i, j, msg)
+			}
 		}
 		// Tear down the connection
 		conn.Close()
@@ -507,4 +518,66 @@ func BenchmarkPubSubThroughput(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		<-handler.msgs
 	}
+}
+
+// Benchmarks tunnel setup
+func BenchmarkTunnelBuild(b *testing.B) {
+	// Configure the benchmark
+	app := fmt.Sprintf("bench-tunnel")
+	handler := &tunneler{
+		opened: make(chan struct{}, b.N),
+		closed: make(chan struct{}, b.N),
+	}
+	// Set up the connection
+	conn, err := Connect(relayPort, app, handler)
+	if err != nil {
+		b.Errorf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Create the tunnels
+	for i := 0; i < b.N; i++ {
+		tun, err := conn.Tunnel(app, 250)
+		if err != nil {
+			b.Errorf("tunneling failed: %v.", err)
+		}
+		defer tun.Close()
+
+		<-handler.opened
+	}
+	// Stop the timer and clean up
+	b.StopTimer()
+}
+
+// Benchmarks tunnel teardown
+func BenchmarkTunnelClose(b *testing.B) {
+	// Configure the benchmark
+	app := fmt.Sprintf("bench-tunnel")
+	handler := &tunneler{
+		opened: make(chan struct{}, b.N),
+		closed: make(chan struct{}, b.N),
+	}
+	// Set up the connection
+	conn, err := Connect(relayPort, app, handler)
+	if err != nil {
+		b.Errorf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Create the tunnels
+	tunnels := make([]Tunnel, b.N)
+	for i := 0; i < b.N; i++ {
+		tun, err := conn.Tunnel(app, 250)
+		if err != nil {
+			b.Errorf("tunneling failed: %v.", err)
+		}
+		tunnels[i] = tun
+		<-handler.opened
+	}
+	// Stop the timer and clean up
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tunnels[i].Close()
+	}
+	b.StopTimer()
 }
