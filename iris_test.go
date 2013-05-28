@@ -581,3 +581,71 @@ func BenchmarkTunnelClose(b *testing.B) {
 	}
 	b.StopTimer()
 }
+
+func BenchmarkTunnelTransfer(b *testing.B) {
+	// Configure the benchmark
+	app := fmt.Sprintf("bench-tunnel")
+	handler := &tunneler{
+		opened: make(chan struct{}, 1),
+		closed: make(chan struct{}, 1),
+	}
+	// Set up the connection
+	conn, err := Connect(relayPort, app, handler)
+	if err != nil {
+		b.Errorf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Create the tunnel
+	tun, err := conn.Tunnel(app, 250)
+	if err != nil {
+		b.Errorf("tunneling failed: %v.", err)
+	}
+	// Reset the timer and measure the transfers
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := tun.Send([]byte{0x00}, 100); err != nil {
+			b.Errorf("recv failed: %v.", err)
+		}
+		if _, err := tun.Recv(100); err != nil {
+			b.Errorf("recv failed: %v.", err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkTunnelTransferThroughput(b *testing.B) {
+	// Configure the benchmark
+	app := fmt.Sprintf("bench-tunnel")
+	handler := &tunneler{
+		opened: make(chan struct{}, 1),
+		closed: make(chan struct{}, 1),
+	}
+	// Set up the connection
+	conn, err := Connect(relayPort, app, handler)
+	if err != nil {
+		b.Errorf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Create the tunnel
+	tun, err := conn.Tunnel(app, 250)
+	if err != nil {
+		b.Errorf("tunneling failed: %v.", err)
+	}
+	// Reset the timer and measure the transfers
+	b.ResetTimer()
+	go func() {
+		for i := 0; i < b.N; i++ {
+			if err := tun.Send([]byte{0x00}, 150); err != nil {
+				b.Errorf("recv failed: %v.", err)
+			}
+		}
+	}()
+	for i := 0; i < b.N; i++ {
+		if _, err := tun.Recv(150); err != nil {
+			b.Errorf("recv failed: %v.", err)
+		}
+	}
+	b.StopTimer()
+}
