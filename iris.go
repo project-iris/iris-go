@@ -110,8 +110,6 @@ type Tunnel interface {
 	//
 	// The method blocks until the connection is torn down or an error occurs, in
 	// which case an iris.Error is returned.
-	//
-	// Double close is considered a programming error and will result in a panic!
 	Close() error
 }
 

@@ -65,8 +65,10 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 		// Network layer
 		sock:    sock,
 		sockBuf: bufio.NewReadWriter(bufio.NewReader(sock), bufio.NewWriter(sock)),
-		quit:    make(chan chan error),
-		term:    make(chan struct{}),
+
+		// Bookkeeping
+		quit: make(chan chan error),
+		term: make(chan struct{}),
 	}
 	// Initialize the connection and wait for a confirmation
 	if err := rel.sendInit(app); err != nil {
@@ -128,12 +130,12 @@ func (r *relay) Request(app string, req []byte, timeout int) ([]byte, error) {
 	// Retrieve the results or fail if terminating
 	select {
 	case <-r.term:
-		return nil, permError(fmt.Errorf("iris: relay terminating"))
+		return nil, permError(fmt.Errorf("relay terminating"))
 	case rep := <-reqCh:
 		if rep != nil {
 			return rep, nil
 		} else {
-			return nil, timeError(fmt.Errorf("iris: request timed out"))
+			return nil, timeError(fmt.Errorf("request timed out"))
 		}
 	}
 }

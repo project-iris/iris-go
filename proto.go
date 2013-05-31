@@ -7,7 +7,9 @@
 //
 // Author: peterke@gmail.com (Peter Szilagyi)
 
-// Contains the wire protocol for communicating with the Iris node.
+// Contains the wire protocol for communicating with the Iris node. The current
+// version is v1.0 and follows the relay protocol specifications:
+// - http://iris.karalabe.com/talks/relay-v1.0.slide
 
 package iris
 
@@ -16,23 +18,23 @@ import (
 )
 
 const (
-	opInit byte = iota
-	opBcast
-	opReq
-	opRep
-	opSub
-	opPub
-	opUnsub
-	opClose
-	opTunReq
-	opTunRep
-	opTunData
-	opTunAck
-	opTunClose
+	opInit     byte = iota // Connection initialization
+	opBcast                // Application broadcast
+	opReq                  // Application request
+	opRep                  // Application reply
+	opSub                  // Topic subscription
+	opPub                  // Topic publish
+	opUnsub                // Topic subscription removal
+	opClose                // Connection closing
+	opTunReq               // Tunnel building request
+	opTunRep               // Tunnel building reply
+	opTunData              // Tunnel data transfer
+	opTunAck               // Tunnel data acknowledgement
+	opTunClose             // Tunnel closing
 )
 
 // Relay protocol version
-var relayVersion = "v1.0a"
+var relayVersion = "v1.0"
 
 // Serializes a single byte into the relay.
 func (r *relay) sendByte(data byte) error {
@@ -51,7 +53,7 @@ func (r *relay) sendBool(data bool) error {
 	}
 }
 
-// Serializes a variable int into the relay.
+// Serializes a variable int into the relay using base 128 encoding.
 func (r *relay) sendVarint(data uint64) error {
 	for {
 		if data > 127 {
@@ -321,10 +323,17 @@ func (r *relay) recvBool() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return b == 1, nil
+	switch b {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
+	default:
+		panic("protocol violation")
+	}
 }
 
-// Retrieves a variable int from the relay.
+// Retrieves a variable int from the relay in base 128 encoding.
 func (r *relay) recvVarint() (uint64, error) {
 	var num uint64
 	for i := uint(0); ; i++ {
@@ -381,9 +390,8 @@ func (r *relay) procInit() error {
 	return nil
 }
 
-// Retrieves a remote request from the relay and processes it.
+// Retrieves a remote request from the relay.
 func (r *relay) procRequest() error {
-	// Retrieve the message parts
 	reqId, err := r.recvVarint()
 	if err != nil {
 		return err
@@ -392,12 +400,11 @@ func (r *relay) procRequest() error {
 	if err != nil {
 		return err
 	}
-	// Handle the message
 	go r.handleRequest(reqId, req)
 	return nil
 }
 
-// Retrieves a remote reply from the relay and processes it.
+// Retrieves a remote reply to a local request from the relay.
 func (r *relay) procReply() error {
 	reqId, err := r.recvVarint()
 	if err != nil {
@@ -410,6 +417,7 @@ func (r *relay) procReply() error {
 	if timeout {
 		go r.handleReply(reqId, nil)
 	} else {
+		// The request didn't time out, get the reply
 		rep, err := r.recvBinary()
 		if err != nil {
 			return err
@@ -429,9 +437,8 @@ func (r *relay) procBroadcast() error {
 	return nil
 }
 
-// Retrieves a topic publish message from the relay and processes it.
+// Retrieves a topic publish message from the relay.
 func (r *relay) procPublish() error {
-	// Retrieve the message parts
 	topic, err := r.recvString()
 	if err != nil {
 		return err
@@ -440,12 +447,11 @@ func (r *relay) procPublish() error {
 	if err != nil {
 		return err
 	}
-	// Pass the request to the iris connection
 	go r.handlePublish(topic, msg)
 	return nil
 }
 
-// Retrieves a remote tunneling request from the relay and processes it.
+// Retrieves a remote tunneling request from the relay.
 func (r *relay) procTunnelRequest() error {
 	tunId, err := r.recvVarint()
 	if err != nil {
@@ -459,7 +465,7 @@ func (r *relay) procTunnelRequest() error {
 	return nil
 }
 
-// Retrieves a remote tunneling request from the relay and processes it.
+// Retrieves the remote reply to a local tunneling request from the relay.
 func (r *relay) procTunnelReply() error {
 	tunId, err := r.recvVarint()
 	if err != nil {
@@ -472,6 +478,7 @@ func (r *relay) procTunnelReply() error {
 	if timeout {
 		go r.handleTunnelReply(tunId, 0, true)
 	} else {
+		// The tunnel didn't time out, proceed
 		buf, err := r.recvVarint()
 		if err != nil {
 			return err
@@ -481,9 +488,8 @@ func (r *relay) procTunnelReply() error {
 	return nil
 }
 
-// Retrieves a remote tunnel data message and processes it.
+// Retrieves a remote tunnel data message.
 func (r *relay) procTunnelData() error {
-	// Retrieve the message parts
 	tunId, err := r.recvVarint()
 	if err != nil {
 		return err
@@ -492,31 +498,26 @@ func (r *relay) procTunnelData() error {
 	if err != nil {
 		return err
 	}
-	// Handle the message
 	go r.handleTunnelData(tunId, msg)
 	return nil
 }
 
-// Retrieves a remote tunnel message ack and processes it.
+// Retrieves a remote tunnel message acknowledgement.
 func (r *relay) procTunnelAck() error {
-	// Retrieve the message parts
 	tunId, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	// Handle the message
 	go r.handleTunnelAck(tunId)
 	return nil
 }
 
-// Retrieves a remote tunneling request from the relay and processes it.
+// Retrieves the remote closure of a tunnel.
 func (r *relay) procTunnelClose() error {
-	// Retrieve the message parts
 	tunId, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	// Handle the message
 	go r.handleTunnelClose(tunId)
 	return nil
 }
@@ -549,13 +550,14 @@ func (r *relay) process() {
 			case opTunClose:
 				err = r.procTunnelClose()
 			case opClose:
+				// Gracefull close
 				closed = true
 			default:
 				err = fmt.Errorf("unknown opcode: %v", op)
 			}
 		}
 	}
-	// Nofity the application if the connection failed
+	// Nofity the application if the connection dropped prematurely
 	if err != nil {
 		go r.handleDrop(err)
 	}

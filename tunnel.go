@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Input buffer size for flow control.
+// Iris to app buffer size for flow control.
 var tunnelBuffer = 128
 
 // Ordered message stream between two endpoints.
@@ -51,7 +51,7 @@ func (t *tunnel) Send(msg []byte, timeout int) error {
 	case <-t.term:
 		return permError(fmt.Errorf("tunnel closed"))
 	case <-after:
-		return timeError(fmt.Errorf("send timed out"))
+		return timeError(fmt.Errorf("send timeout"))
 	case t.atoi <- struct{}{}:
 		return t.rel.sendTunnelData(t.id, msg)
 	}
@@ -87,6 +87,7 @@ func (t *tunnel) Recv(timeout int) ([]byte, error) {
 
 // Implements iris.Tunnel.Close.
 func (t *tunnel) Close() error {
+	// Signal the relay and wait for closure (either remote confirm or local fail)
 	err := t.rel.sendTunnelClose(t.id)
 	<-t.term
 	return err
@@ -208,7 +209,7 @@ func (t *tunnel) handleData(msg []byte) {
 
 // Handles the gracefull remote closure of the tunnel.
 func (t *tunnel) handleClose() {
-	// Block the buffer channels
+	// Nil out the buffers to block send and receive ops
 	t.itoa = nil
 	t.atoi = nil
 

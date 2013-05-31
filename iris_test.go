@@ -263,6 +263,7 @@ func (t *tunneler) HandleTunnel(tun Tunnel) {
 			t.closed <- struct{}{}
 		}
 	}
+	tun.Close()
 }
 
 func (t *tunneler) HandleDrop(reason error) {
