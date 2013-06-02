@@ -652,3 +652,119 @@ func BenchmarkTunnelTransferThroughput(b *testing.B) {
 	}
 	b.StopTimer()
 }
+
+// -----------------------------------------------------------------------------
+// High level tunneling tests
+// -----------------------------------------------------------------------------
+
+// Very simple test handler to stream inbound tunnel messages into a sink channel.
+type tunnelHandler struct {
+	sink chan []byte
+}
+
+func (h *tunnelHandler) HandleBroadcast(msg []byte) {
+	panic("Not implemented!")
+}
+func (h *tunnelHandler) HandleRequest(req []byte) []byte {
+	panic("Not implemented!")
+}
+func (h *tunnelHandler) HandleTunnel(tun Tunnel) {
+	defer tun.Close()
+	for {
+		if msg, err := tun.Recv(1000); err == nil {
+			select {
+			case h.sink <- msg:
+				// Ok
+			case <-time.After(time.Second):
+				panic("Sink full!")
+			}
+		} else {
+			break
+		}
+	}
+}
+func (g *tunnelHandler) HandleDrop(reason error) {
+	panic("Not implemented!")
+}
+
+// Synchronous tunnel data transfer tests
+func TestTunnelSync(t *testing.T) {
+	// Connect to the relay
+	app := "tunnel-sync-test"
+	handler := &tunnelHandler{
+		sink: make(chan []byte),
+	}
+	conn, err := Connect(relayPort, app, handler)
+	if err != nil {
+		t.Fatalf("failed to connect to relay node: %v.", err)
+	}
+	defer conn.Close()
+
+	// Open a new self-tunnel
+	tun, err := conn.Tunnel(app, 1000)
+	if err != nil {
+		t.Fatalf("failed to create tunnel: %v.", err)
+	}
+	defer tun.Close()
+
+	// Send a load of messages one-by-one, waiting for remote arrival
+	for i := 0; i < 100000; i++ {
+		out := []byte(fmt.Sprintf("%d", i))
+		if err := tun.Send(out, 1000); err != nil {
+			t.Fatalf("failed to send message %d: %v.", i, err)
+		}
+		select {
+		case msg := <-handler.sink:
+			if bytes.Compare(out, msg) != 0 {
+				t.Fatalf("message %d mismatch: have %v, want %v.", i, string(msg), string(out))
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("transfer %d timeout.", i)
+		}
+	}
+}
+
+// Asynchronous tunnel data transfer tests
+func TestTunnelAsync(t *testing.T) {
+	// Connect to the relay
+	app := "tunnel-async-test"
+	handler := &tunnelHandler{
+		sink: make(chan []byte),
+	}
+	conn, err := Connect(relayPort, app, handler)
+	if err != nil {
+		t.Fatalf("failed to connect to relay node: %v.", err)
+	}
+	defer conn.Close()
+
+	// Open a new self-tunnel
+	tun, err := conn.Tunnel(app, 1000)
+	if err != nil {
+		t.Fatalf("failed to create tunnel: %v.", err)
+	}
+	defer tun.Close()
+
+	// Send a load of messages async, reading whilst sending
+	messages := 100000
+
+	go func() {
+		for i := 0; i < messages; i++ {
+			out := []byte(fmt.Sprintf("%d", i))
+			if err := tun.Send(out, 1000); err != nil {
+				t.Fatalf("failed to send message %d: %v.", i, err)
+			}
+		}
+	}()
+
+	for i := 0; i < messages; i++ {
+		out := []byte(fmt.Sprintf("%d", i))
+		select {
+		case msg := <-handler.sink:
+			if bytes.Compare(out, msg) != 0 {
+				t.Fatalf("message %d mismatch: have %v, want %v.", i, string(msg), string(out))
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("transfer %d timeout.", i)
+		}
+	}
+}
