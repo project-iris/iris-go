@@ -7,8 +7,9 @@
 //
 // Author: peterke@gmail.com (Peter Szilagyi)
 
-// Event handlers for relay side messages. All methods in this file are assumed
-// to be running in a separate go routine!
+// Event handlers for relay side messages. Almost all methods in this file are
+// assumed to be running in a separate go routine! The only exception is the
+// tunnel data handler which requires strict order.
 
 package iris
 
@@ -102,8 +103,8 @@ func (r *relay) handleTunnelAck(tunId uint64) {
 
 // Forwards the received data to the tunnel for delivery.
 func (r *relay) handleTunnelData(tunId uint64, msg []byte) {
-	r.tunLock.Lock()
-	defer r.tunLock.Unlock()
+	r.tunLock.RLock()
+	defer r.tunLock.RUnlock()
 
 	// Make sure the tunnel is still alive
 	if tun, ok := r.tunLive[tunId]; ok {

@@ -28,7 +28,7 @@ type tunnel struct {
 	atoi chan struct{} // Application to Iris pending ack buffer
 
 	// Bookkeeping fields
-	init chan bool     // Initialization channel for outbount tunnels
+	init chan bool     // Initialization channel for outbound tunnels
 	term chan struct{} // Channel to signal termination to blocked go-routines
 }
 

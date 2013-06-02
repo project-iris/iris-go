@@ -638,14 +638,16 @@ func BenchmarkTunnelTransferThroughput(b *testing.B) {
 	b.ResetTimer()
 	go func() {
 		for i := 0; i < b.N; i++ {
-			if err := tun.Send([]byte{0x00}, 150); err != nil {
-				b.Errorf("recv failed: %v.", err)
+			if err := tun.Send([]byte{byte(i)}, 1000); err != nil {
+				b.Fatalf("send failed: %v.", err)
 			}
 		}
 	}()
 	for i := 0; i < b.N; i++ {
-		if _, err := tun.Recv(150); err != nil {
-			b.Errorf("recv failed: %v.", err)
+		if msg, err := tun.Recv(1000); err != nil {
+			b.Fatalf("recv failed: %v.", err)
+		} else if len(msg) != 1 || msg[0] != byte(i) {
+			b.Fatalf("recv data mismatch: have %v, want %v.", msg, []byte{byte(i)})
 		}
 	}
 	b.StopTimer()
