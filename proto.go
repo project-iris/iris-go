@@ -390,6 +390,16 @@ func (r *relay) procInit() error {
 	return nil
 }
 
+// Retrieves a remote broadcast message from the relay and notifies the handler.
+func (r *relay) procBroadcast() error {
+	msg, err := r.recvBinary()
+	if err != nil {
+		return err
+	}
+	go r.handleBroadcast(msg)
+	return nil
+}
+
 // Retrieves a remote request from the relay.
 func (r *relay) procRequest() error {
 	reqId, err := r.recvVarint()
@@ -427,16 +437,6 @@ func (r *relay) procReply() error {
 	return nil
 }
 
-// Retrieves a remote broadcast message from the relay and notifies the handler.
-func (r *relay) procBroadcast() error {
-	msg, err := r.recvBinary()
-	if err != nil {
-		return err
-	}
-	go r.handleBroadcast(msg)
-	return nil
-}
-
 // Retrieves a topic publish message from the relay.
 func (r *relay) procPublish() error {
 	topic, err := r.recvString()
@@ -453,7 +453,7 @@ func (r *relay) procPublish() error {
 
 // Retrieves a remote tunneling request from the relay.
 func (r *relay) procTunnelRequest() error {
-	tunId, err := r.recvVarint()
+	tmpId, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
@@ -461,7 +461,7 @@ func (r *relay) procTunnelRequest() error {
 	if err != nil {
 		return err
 	}
-	go r.handleTunnelRequest(tunId, int(buf))
+	go r.handleTunnelRequest(tmpId, int(buf))
 	return nil
 }
 
