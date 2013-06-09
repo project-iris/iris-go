@@ -109,7 +109,7 @@ func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 		id:  tunId,
 		rel: r,
 
-		atoi: make(chan struct{}, tunnelBuffer),
+		itoa: make(chan []byte, tunnelBuffer),
 		init: make(chan bool),
 		term: make(chan struct{}),
 	}
@@ -159,8 +159,8 @@ func (r *relay) acceptTunnel(tmpId uint64, buf int) (Tunnel, error) {
 	tun := &tunnel{
 		id:   tunId,
 		rel:  r,
-		itoa: make(chan []byte, buf),
-		atoi: make(chan struct{}, tunnelBuffer),
+		itoa: make(chan []byte, tunnelBuffer),
+		atoi: make(chan struct{}, buf),
 		term: make(chan struct{}),
 	}
 	r.tunIdx++
@@ -182,7 +182,7 @@ func (r *relay) acceptTunnel(tmpId uint64, buf int) (Tunnel, error) {
 // a timeout.
 func (t *tunnel) handleInit(buf int, timeout bool) {
 	if !timeout {
-		t.itoa = make(chan []byte, buf)
+		t.atoi = make(chan struct{}, buf)
 	}
 	t.init <- !timeout
 }
