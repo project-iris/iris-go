@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 )
 
 // Message relay between the local app and the local iris node.
@@ -96,7 +97,7 @@ func (r *relay) Broadcast(app string, msg []byte) error {
 }
 
 // Implements iris.Connection.Request.
-func (r *relay) Request(app string, req []byte, timeout int) ([]byte, error) {
+func (r *relay) Request(app string, req []byte, timeout time.Duration) ([]byte, error) {
 	// Sanity check on the arguments
 	if len(app) == 0 {
 		panic("iris: empty application identifier")
@@ -104,8 +105,9 @@ func (r *relay) Request(app string, req []byte, timeout int) ([]byte, error) {
 	if req == nil {
 		panic("iris: nil request")
 	}
-	if timeout <= 0 {
-		panic(fmt.Sprintf("iris: invalid timeout %d <= 0", timeout))
+	timeoutms := int(timeout.Nanoseconds() / 1000000)
+	if timeoutms < 1 {
+		panic(fmt.Sprintf("iris: invalid timeout %d < 1ms", timeoutms))
 	}
 	// Create a reply channel for the results
 	r.reqLock.Lock()
@@ -124,7 +126,7 @@ func (r *relay) Request(app string, req []byte, timeout int) ([]byte, error) {
 		close(reqCh)
 	}()
 	// Send the request
-	if err := r.sendRequest(reqId, app, req, timeout); err != nil {
+	if err := r.sendRequest(reqId, app, req, timeoutms); err != nil {
 		return nil, err
 	}
 	// Retrieve the results or fail if terminating
@@ -204,9 +206,9 @@ func (r *relay) Unsubscribe(topic string) error {
 }
 
 // Implements iris.Connection.Tunnel.
-func (r *relay) Tunnel(app string, timeout int) (Tunnel, error) {
+func (r *relay) Tunnel(app string, timeout time.Duration) (Tunnel, error) {
 	// Simple call indirection to move into the tunnel source file
-	return r.initiateTunnel(app, timeout)
+	return r.initiateTunnel(app, int(timeout.Nanoseconds()/1000000))
 }
 
 // Implements iris.Connection.Close.

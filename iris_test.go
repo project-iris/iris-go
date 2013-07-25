@@ -131,35 +131,34 @@ func TestReqRep(t *testing.T) {
 		app := fmt.Sprintf("test-reqrep-%d", i)
 		conn, err := Connect(relayPort, app, handler)
 		if err != nil {
-			t.Errorf("test %d: connection failed: %v.", i, err)
+			t.Fatalf("test %d: connection failed: %v.", i, err)
 		}
-		defer conn.Close()
-
 		// Verify concurrent requests
 		done := make(chan struct{}, 25)
 		for rep := 0; rep < cap(done); rep++ {
-			go func() {
-				req := []byte(fmt.Sprintf("request-%d-%d", i, rep))
-				res, err := conn.Request(app, req, 250)
+			go func(idx int) {
+				defer func() { done <- struct{}{} }()
+
+				req := []byte(fmt.Sprintf("request-%d-%d", i, idx))
+				res, err := conn.Request(app, req, 250*time.Millisecond)
 				if err != nil {
-					t.Errorf("test %d, rep %d: request failed: %v.", i, rep, err)
+					t.Fatalf("test %d, rep %d: request failed: %v.", i, idx, err)
 				}
 				if bytes.Compare(req, res) != 0 {
-					t.Errorf("test %d, rep %d: reply mismatch: have %v, want %v.", i, rep, res, req)
+					t.Fatalf("test %d, rep %d: reply mismatch: have %v, want %v.", i, idx, res, req)
 				}
-				done <- struct{}{}
-			}()
+			}(rep)
 		}
 		for rep := 0; rep < cap(done); rep++ {
 			<-done
 		}
 		// Verify timeouts
 		req := []byte(fmt.Sprintf("request-%d-timeout", i))
-		rep, err := conn.Request(app, req, 25)
+		rep, err := conn.Request(app, req, 25*time.Millisecond)
 		if err == nil {
-			t.Errorf("test %d: timeout expected, nil error received, reply: %v.", i, string(rep))
+			t.Fatalf("test %d: timeout expected, nil error received, reply: %v.", i, string(rep))
 		} else if !err.(Error).Timeout() {
-			t.Errorf("test %d: error mismatch, have %v, want timeout.", i, err)
+			t.Fatalf("test %d: error mismatch, have %v, want timeout.", i, err)
 		}
 		// Tear down the connection
 		conn.Close()
@@ -256,7 +255,7 @@ func (t *tunneler) HandleTunnel(tun Tunnel) {
 	t.opened <- struct{}{}
 	for done := false; !done; {
 		if msg, err := tun.Recv(0); err == nil {
-			if err := tun.Send(msg, 100); err != nil {
+			if err := tun.Send(msg, 100*time.Millisecond); err != nil {
 				panic(err)
 			}
 		} else {
@@ -285,7 +284,7 @@ func TestTunnel(t *testing.T) {
 		// Tunnel
 		for j := 0; j < 10; j++ {
 			// Open the tunnel
-			tun, err := conn.Tunnel(app, 250)
+			tun, err := conn.Tunnel(app, 250*time.Millisecond)
 			if err != nil {
 				t.Errorf("test %d, tun %d: tunneling failed: %v.", i, j, err)
 			}
@@ -295,10 +294,10 @@ func TestTunnel(t *testing.T) {
 			// Send a few ping-pong messages
 			for k := 0; k < 10; k++ {
 				out := []byte{byte(i), byte(j), byte(k)}
-				if err := tun.Send(out, 250); err != nil {
+				if err := tun.Send(out, 250*time.Millisecond); err != nil {
 					t.Errorf("test %d, tun %d, msg %d: send failed: %v.", i, j, k, err)
 				}
-				if msg, err := tun.Recv(250); err != nil {
+				if msg, err := tun.Recv(250 * time.Millisecond); err != nil {
 					t.Errorf("test %d, tun %d, msg %d: recv failed: %v.", i, j, k, err)
 				} else if bytes.Compare(msg, out) != 0 {
 					t.Errorf("test %d, tun %d, msg %d: message mismatch: have %v, want %v.", i, j, k, msg, out)
@@ -312,10 +311,10 @@ func TestTunnel(t *testing.T) {
 			<-handler.closed
 
 			// Make sure both send and recv fails
-			if err := tun.Send([]byte{0x00}, 100); err == nil {
+			if err := tun.Send([]byte{0x00}, 100*time.Millisecond); err == nil {
 				t.Errorf("test %d, tun %d: sent on a closed tunnel.", i, j)
 			}
-			if msg, err := tun.Recv(100); err == nil {
+			if msg, err := tun.Recv(100 * time.Millisecond); err == nil {
 				t.Errorf("test %d, tun %d: received from a closed tunnel %v.", i, j, msg)
 			}
 		}
@@ -630,7 +629,7 @@ func BenchmarkTunnelTransferThroughput(b *testing.B) {
 	defer conn.Close()
 
 	// Create the tunnel
-	tun, err := conn.Tunnel(app, 250)
+	tun, err := conn.Tunnel(app, 250*time.Millisecond)
 	if err != nil {
 		b.Errorf("tunneling failed: %v.", err)
 	}
@@ -638,13 +637,13 @@ func BenchmarkTunnelTransferThroughput(b *testing.B) {
 	b.ResetTimer()
 	go func() {
 		for i := 0; i < b.N; i++ {
-			if err := tun.Send([]byte{byte(i)}, 1000); err != nil {
+			if err := tun.Send([]byte{byte(i)}, 1000*time.Millisecond); err != nil {
 				b.Fatalf("send failed: %v.", err)
 			}
 		}
 	}()
 	for i := 0; i < b.N; i++ {
-		if msg, err := tun.Recv(1000); err != nil {
+		if msg, err := tun.Recv(1000 * time.Millisecond); err != nil {
 			b.Fatalf("recv failed: %v.", err)
 		} else if len(msg) != 1 || msg[0] != byte(i) {
 			b.Fatalf("recv data mismatch: have %v, want %v.", msg, []byte{byte(i)})
@@ -671,7 +670,7 @@ func (h *tunnelHandler) HandleRequest(req []byte) []byte {
 func (h *tunnelHandler) HandleTunnel(tun Tunnel) {
 	defer tun.Close()
 	for {
-		if msg, err := tun.Recv(1000); err == nil {
+		if msg, err := tun.Recv(1000 * time.Millisecond); err == nil {
 			select {
 			case h.sink <- msg:
 				// Ok
@@ -701,7 +700,7 @@ func TestTunnelSync(t *testing.T) {
 	defer conn.Close()
 
 	// Open a new self-tunnel
-	tun, err := conn.Tunnel(app, 1000)
+	tun, err := conn.Tunnel(app, 1000*time.Millisecond)
 	if err != nil {
 		t.Fatalf("failed to create tunnel: %v.", err)
 	}
@@ -710,7 +709,7 @@ func TestTunnelSync(t *testing.T) {
 	// Send a load of messages one-by-one, waiting for remote arrival
 	for i := 0; i < 100000; i++ {
 		out := []byte(fmt.Sprintf("%d", i))
-		if err := tun.Send(out, 1000); err != nil {
+		if err := tun.Send(out, 1000*time.Millisecond); err != nil {
 			t.Fatalf("failed to send message %d: %v.", i, err)
 		}
 		select {
@@ -738,7 +737,7 @@ func TestTunnelAsync(t *testing.T) {
 	defer conn.Close()
 
 	// Open a new self-tunnel
-	tun, err := conn.Tunnel(app, 1000)
+	tun, err := conn.Tunnel(app, 1000*time.Millisecond)
 	if err != nil {
 		t.Fatalf("failed to create tunnel: %v.", err)
 	}
@@ -750,7 +749,7 @@ func TestTunnelAsync(t *testing.T) {
 	go func() {
 		for i := 0; i < messages; i++ {
 			out := []byte(fmt.Sprintf("%d", i))
-			if err := tun.Send(out, 1000); err != nil {
+			if err := tun.Send(out, 1000*time.Millisecond); err != nil {
 				t.Fatalf("failed to send message %d: %v.", i, err)
 			}
 		}

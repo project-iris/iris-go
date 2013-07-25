@@ -33,18 +33,21 @@ type tunnel struct {
 }
 
 // Implements iris.Tunnel.Send.
-func (t *tunnel) Send(msg []byte, timeout int) error {
+func (t *tunnel) Send(msg []byte, timeout time.Duration) error {
 	// Sanity check on the arguments
 	if msg == nil {
 		panic("iris: nil message")
 	}
-	if timeout < 0 {
-		panic(fmt.Sprintf("iris: invalid timeout %d < 0", timeout))
+	if timeout != 0 {
+		timeoutms := int(timeout.Nanoseconds() / 1000000)
+		if timeoutms < 1 {
+			panic(fmt.Sprintf("iris: invalid timeout %d < 1ms", timeoutms))
+		}
 	}
 	// Create (the possibly nil) timeout signaller
 	var after <-chan time.Time
-	if timeout > 0 {
-		after = time.After(time.Duration(timeout) * time.Millisecond)
+	if timeout != 0 {
+		after = time.After(timeout)
 	}
 	// Query for a send allowance
 	select {
@@ -58,14 +61,17 @@ func (t *tunnel) Send(msg []byte, timeout int) error {
 }
 
 // Implements iris.Tunnel.Recv.
-func (t *tunnel) Recv(timeout int) ([]byte, error) {
+func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
 	// Sanity check on the arguments
-	if timeout < 0 {
-		panic(fmt.Sprintf("iris: invalid timeout %d < 0", timeout))
+	if timeout != 0 {
+		timeoutms := int(timeout.Nanoseconds() / 1000000)
+		if timeoutms < 1 {
+			panic(fmt.Sprintf("iris: invalid timeout %d < 1ms", timeoutms))
+		}
 	}
 	// Create the timeout signaller
 	var after <-chan time.Time
-	if timeout > 0 {
+	if timeout != 0 {
 		after = time.After(time.Duration(timeout) * time.Millisecond)
 	}
 	// Retrieve the next message

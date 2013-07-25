@@ -10,6 +10,10 @@
 // Package iris contains the go binding to the iris messaging framework.
 package iris
 
+import (
+	"time"
+)
+
 // Returns the relay protocol version implemented. Connecting to an Iris node
 // will fail unless the versions match exactly.
 func Version() string {
@@ -22,7 +26,7 @@ func Connect(port int, app string, handler ConnectionHandler) (Connection, error
 	return newRelay(port, app, handler)
 }
 
-// Communication interface to the iris network.
+// Link to the Iris node. All communication must pass through one of these.
 type Connection interface {
 	// Broadcasts a message to all applications of type app. No guarantees are
 	// made that all recipients receive the message (best effort).
@@ -37,9 +41,9 @@ type Connection interface {
 	// In case of a failure, the function returns a nil reply with an iris.Error
 	// stating the reason.
 	//
-	// The timeout is in milliseconds. Setting infinite timeouts is not supported,
-	// hence the usual value of 0 (or less) will result in a panic!
-	Request(app string, req []byte, timeout int) ([]byte, error)
+	// The timeout unit is in milliseconds. Setting anything smaller will result
+	// in a panic!
+	Request(app string, req []byte, timeout time.Duration) ([]byte, error)
 
 	// Subscribes to topic, using handler as the callback for arriving events.
 	//
@@ -72,9 +76,9 @@ type Connection interface {
 	// The method blocks until either the newly created tunnel is set up, or an
 	// error occurs, in which case a nil tunnel and an iris.Error is returned.
 	//
-	// The timeout is in milliseconds. Setting infinite timeouts is not supported,
-	// hence the usual value of 0 (or less) will result in a panic!
-	Tunnel(app string, timeout int) (Tunnel, error)
+	// The timeout unit is in milliseconds. Setting anything smaller will result
+	// in a panic!
+	Tunnel(app string, timeout time.Duration) (Tunnel, error)
 
 	// Gracefully terminates the connection removing all subscriptions and closing
 	// all tunnels.
@@ -84,28 +88,29 @@ type Connection interface {
 }
 
 // Communication stream between the local application and a remote endpoint. The
-// ordered delivery of messages is guaranteed.
+// ordered delivery of messages is guaranteed and the message flow between the
+// peers is throttled.
 //
 // Note, a tunnel is designed to be used by a single thread. Concurrent access
 // will result in undefined behavior.
 type Tunnel interface {
 	// Sends a message over the tunnel to the remote pair.
 	//
-	// The method blocks until the lcaol relay node receives the message, or an
+	// The method blocks until the local relay node receives the message, or an
 	// error occurs, in which case an iris.Error is returned.
 	//
-	// The timeout is in milliseconds. Inifinite timeouts are supported by setting
-	// a value of 0. Anything less will result in a panic!
-	Send(msg []byte, timeout int) error
+	// The timeout unit is in milliseconds. Infinite timeouts are supported with
+	// the value 0. Setting anything in between will result in a panic!
+	Send(msg []byte, timeout time.Duration) error
 
 	// Retrieves a message from the tunnel, blocking until one is available. As
 	// with the Send method, Recv too returns an iris.Error in case of a failure.
 	//
-	// The timeout is in milliseconds. Inifinite timeouts are supported by setting
-	// a value of 0. Anything less will result in a panic!
-	Recv(timeout int) ([]byte, error)
+	// The timeout unit is in milliseconds. Infinite timeouts are supported with
+	// the value 0. Setting anything in between will result in a panic!
+	Recv(timeout time.Duration) ([]byte, error)
 
-	// Closes the tunnel between the pair. Any blocked read and write operations
+	// Closes the tunnel between the pair. Any blocked read and write operation
 	// will terminate with a failure.
 	//
 	// The method blocks until the connection is torn down or an error occurs, in
