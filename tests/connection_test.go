@@ -10,6 +10,7 @@
 package tests
 
 import (
+	"fmt"
 	"github.com/karalabe/iris-go"
 	"sync"
 	"testing"
@@ -79,4 +80,18 @@ func TestConnectParallel(t *testing.T) {
 	start.Wait()
 	proc.Done()
 	term.Wait()
+}
+
+// Benchmarks connection setup
+func BenchmarkConnect(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		app := fmt.Sprintf("bench-connect-%d", i)
+		if conn, err := iris.Connect(relayPort, app, nil); err != nil {
+			b.Fatalf("iteration %d: connection failed: %v.", i, err)
+		} else {
+			defer conn.Close()
+		}
+	}
+	// Stop the timer and clean up
+	b.StopTimer()
 }

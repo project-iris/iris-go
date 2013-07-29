@@ -11,7 +11,6 @@ package iris
 
 import (
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -84,7 +83,8 @@ func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
 		// Message arrived, ack and return
 		go func() {
 			if err := t.rel.sendTunnelAck(t.id); err != nil {
-				log.Printf("iris: tunnel ack failed: %v.", err)
+				// Common race (during closing), valid, left in for debugging purposes
+				//log.Printf("iris: tunnel ack failed: %v.", err)
 			}
 		}()
 		return msg, nil
@@ -110,6 +110,10 @@ func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
 	}
 	// Create a potential tunnel
 	r.tunLock.Lock()
+	if r.tunLive == nil {
+		r.tunLock.Unlock()
+		return nil, permError(fmt.Errorf("connection closed"))
+	}
 	tunId := r.tunIdx
 	tun := &tunnel{
 		id:  tunId,

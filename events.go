@@ -55,14 +55,17 @@ func (r *relay) handlePublish(topic string, msg []byte) {
 
 // Notifies the application of the relay link going down.
 func (r *relay) handleDrop(reason error) {
-	// Notify the app of the drop
-	r.handler.HandleDrop(reason)
+	// Notify the app of the drop if premature
+	if reason != nil {
+		r.handler.HandleDrop(reason)
+	}
 
 	// Close all open tunnels
 	r.tunLock.Lock()
-	for tunId, _ := range r.tunLive {
-		go r.handleTunnelClose(tunId)
+	for _, tun := range r.tunLive {
+		tun.handleClose()
 	}
+	r.tunLive = nil
 	r.tunLock.Unlock()
 }
 
@@ -97,7 +100,8 @@ func (r *relay) handleTunnelAck(tunId uint64) {
 	if ok {
 		tun.handleAck()
 	} else {
-		log.Printf("iris: stale tunnel ack.")
+		// Rare race, valid, left in for debugging purposes
+		//log.Printf("iris: stale tunnel ack.")
 	}
 }
 
@@ -110,7 +114,8 @@ func (r *relay) handleTunnelData(tunId uint64, msg []byte) {
 	if tun, ok := r.tunLive[tunId]; ok {
 		tun.handleData(msg)
 	} else {
-		log.Printf("iris: stale data for tunnel #%v.", tunId)
+		// Rare race, valid, left in for debugging purposes
+		//log.Printf("iris: stale data for tunnel #%v.", tunId)
 	}
 }
 
@@ -124,6 +129,7 @@ func (r *relay) handleTunnelClose(tunId uint64) {
 		tun.handleClose()
 		delete(r.tunLive, tunId)
 	} else {
-		log.Printf("iris: stale close of tunnel #%v.", tunId)
+		// Rare race, valid, left in for debugging purposes
+		//log.Printf("iris: stale close of tunnel #%v.", tunId)
 	}
 }

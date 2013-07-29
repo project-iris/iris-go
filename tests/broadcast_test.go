@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"github.com/karalabe/iris-go"
+	"github.com/karalabe/iris/pool"
 	"io"
 	"sync"
 	"testing"
@@ -135,4 +136,85 @@ func TestBroadcastMulti(t *testing.T) {
 	start.Wait()
 	proc.Done()
 	term.Wait()
+}
+
+// Benchmarks broadcasting a single message
+func BenchmarkBroadcastLatency(b *testing.B) {
+	// Configure the benchmark
+	app := "bench-broadcast-latency"
+	handler := &broadcaster{
+		msgs: make(chan []byte, b.N),
+	}
+	// Set up the connection
+	conn, err := iris.Connect(relayPort, app, handler)
+	if err != nil {
+		b.Fatalf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Reset timer and benchmark the message transfer
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		conn.Broadcast(app, []byte{byte(i)})
+		<-handler.msgs
+	}
+}
+
+// Benchmarks broadcasting a stream of messages
+func BenchmarkBroadcastThroughput2Threads(b *testing.B) {
+	benchmarkBroadcastThroughput(2, b)
+}
+
+func BenchmarkBroadcastThroughput4Threads(b *testing.B) {
+	benchmarkBroadcastThroughput(4, b)
+}
+
+func BenchmarkBroadcastThroughput8Threads(b *testing.B) {
+	benchmarkBroadcastThroughput(8, b)
+}
+
+func BenchmarkBroadcastThroughput16Threads(b *testing.B) {
+	benchmarkBroadcastThroughput(16, b)
+}
+
+func BenchmarkBroadcastThroughput32Threads(b *testing.B) {
+	benchmarkBroadcastThroughput(32, b)
+}
+
+func BenchmarkBroadcastThroughput64Threads(b *testing.B) {
+	benchmarkBroadcastThroughput(64, b)
+}
+
+func BenchmarkBroadcastThroughput128Threads(b *testing.B) {
+	benchmarkBroadcastThroughput(128, b)
+}
+
+func benchmarkBroadcastThroughput(threads int, b *testing.B) {
+	// Configure the benchmark
+	app := "bench-broadcast-throughput"
+	handler := &broadcaster{
+		msgs: make(chan []byte, b.N),
+	}
+	// Set up the connection
+	conn, err := iris.Connect(relayPort, app, handler)
+	if err != nil {
+		b.Fatalf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Create the thread pool with the concurrent broadcasts
+	workers := pool.NewThreadPool(threads)
+	workers.Schedule(func() {
+		for i := 0; i < b.N; i++ {
+			if err := conn.Broadcast(app, []byte{byte(i)}); err != nil {
+				b.Fatalf("broadcast failed: %v.", err)
+			}
+		}
+	})
+	// Reset timer and benchmark the message transfer
+	b.ResetTimer()
+	workers.Start()
+	for i := 0; i < b.N; i++ {
+		<-handler.msgs
+	}
 }

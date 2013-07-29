@@ -557,13 +557,12 @@ func (r *relay) process() {
 			}
 		}
 	}
-	// Nofity the application if the connection dropped prematurely
-	if err != nil {
-		go r.handleDrop(err)
-	}
 	// Close the socket and signal termination to all blocked threads
 	err = r.sock.Close()
 	close(r.term)
+
+	// Nofity the application if the connection dropped
+	r.handleDrop(err)
 
 	// Wait for termination sync
 	errc := <-r.quit

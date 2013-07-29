@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"github.com/karalabe/iris-go"
+	"github.com/karalabe/iris/pool"
 	"io"
 	"sync"
 	"testing"
@@ -129,4 +130,80 @@ func TestReqRepMulti(t *testing.T) {
 	done.Wait()
 	term.Done()
 	kill.Wait()
+}
+
+// Benchmarks the passthrough of a single request-reply.
+func BenchmarkReqRepLatency(b *testing.B) {
+	// Set up the connection
+	app := "bench-reqrep-latency"
+	conn, err := iris.Connect(relayPort, app, new(requester))
+	if err != nil {
+		b.Fatalf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Reset timer and benchmark the message transfer
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := conn.Request(app, []byte{byte(i)}, 10*time.Second); err != nil {
+			b.Fatalf("request failed: %v.", err)
+		}
+	}
+}
+
+// Benchmarks parallel request-reply.
+func BenchmarkReqRepThroughput2Threads(b *testing.B) {
+	benchmarkReqRepThroughput(2, b)
+}
+
+func BenchmarkReqRepThroughput4Threads(b *testing.B) {
+	benchmarkReqRepThroughput(4, b)
+}
+
+func BenchmarkReqRepThroughput8Threads(b *testing.B) {
+	benchmarkReqRepThroughput(8, b)
+}
+
+func BenchmarkReqRepThroughput16Threads(b *testing.B) {
+	benchmarkReqRepThroughput(16, b)
+}
+
+func BenchmarkReqRepThroughput32Threads(b *testing.B) {
+	benchmarkReqRepThroughput(32, b)
+}
+
+func BenchmarkReqRepThroughput64Threads(b *testing.B) {
+	benchmarkReqRepThroughput(64, b)
+}
+
+func BenchmarkReqRepThroughput128Threads(b *testing.B) {
+	benchmarkReqRepThroughput(128, b)
+}
+
+func benchmarkReqRepThroughput(threads int, b *testing.B) {
+	// Set up the connection
+	app := "bench-reqrep-throughput"
+	conn, err := iris.Connect(relayPort, app, new(requester))
+	if err != nil {
+		b.Fatalf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Create the thread pool with the concurrent requests
+	workers := pool.NewThreadPool(threads)
+	done := make(chan struct{}, b.N)
+	for i := 0; i < b.N; i++ {
+		workers.Schedule(func() {
+			defer func() { done <- struct{}{} }()
+			if _, err := conn.Request(app, []byte{byte(i)}, 60*time.Second); err != nil {
+				b.Fatalf("request failed: %v.", err)
+			}
+		})
+	}
+	// Reset timer and benchmark the message transfer
+	b.ResetTimer()
+	workers.Start()
+	for i := 0; i < b.N; i++ {
+		<-done
+	}
 }
