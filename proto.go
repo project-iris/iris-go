@@ -7,9 +7,7 @@
 //
 // Author: peterke@gmail.com (Peter Szilagyi)
 
-// Contains the wire protocol for communicating with the Iris node. The current
-// version is v1.0 and follows the relay protocol specifications:
-// - http://iris.karalabe.com/talks/relay-v1.0.slide
+// Contains the wire protocol for communicating with the Iris node.
 
 package iris
 
@@ -29,7 +27,7 @@ const (
 	opTunReq               // Tunnel building request
 	opTunRep               // Tunnel building reply
 	opTunData              // Tunnel data transfer
-	opTunAck               // Tunnel data acknowledgement
+	opTunAck               // Tunnel data acknowledgment
 	opTunClose             // Tunnel closing
 )
 
@@ -195,7 +193,7 @@ func (r *relay) sendPublish(topic string, msg []byte) error {
 	return r.sendFlush()
 }
 
-// Atomically sends a topic unsubscription message into the relay.
+// Atomically sends a topic un-subscription message into the relay.
 func (r *relay) sendUnsubscribe(topic string) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
@@ -243,7 +241,7 @@ func (r *relay) sendTunnelRequest(tunId uint64, app string, buf int, time int) e
 	return r.sendFlush()
 }
 
-// Atomically sends the acknowledgement for a tunneling request into the relay.
+// Atomically sends the acknowledgment for a tunneling request into the relay.
 func (r *relay) sendTunnelReply(tmpId, tunId uint64, buf int) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
@@ -280,7 +278,7 @@ func (r *relay) sendTunnelData(tunId uint64, msg []byte) error {
 	return r.sendFlush()
 }
 
-// Atomically sends a tunnel data acknowledgement into the relay.
+// Atomically sends a tunnel data acknowledgment into the relay.
 func (r *relay) sendTunnelAck(tunId uint64) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
@@ -502,7 +500,7 @@ func (r *relay) procTunnelData() error {
 	return nil
 }
 
-// Retrieves a remote tunnel message acknowledgement.
+// Retrieves a remote tunnel message acknowledgment.
 func (r *relay) procTunnelAck() error {
 	tunId, err := r.recvVarint()
 	if err != nil {
@@ -550,7 +548,7 @@ func (r *relay) process() {
 			case opTunClose:
 				err = r.procTunnelClose()
 			case opClose:
-				// Gracefull close
+				// Graceful close
 				closed = true
 			default:
 				err = fmt.Errorf("unknown opcode: %v", op)
@@ -558,10 +556,10 @@ func (r *relay) process() {
 		}
 	}
 	// Close the socket and signal termination to all blocked threads
-	err = r.sock.Close()
+	r.sock.Close()
 	close(r.term)
 
-	// Nofity the application if the connection dropped
+	// Notify the application if the connection dropped
 	r.handleDrop(err)
 
 	// Wait for termination sync
