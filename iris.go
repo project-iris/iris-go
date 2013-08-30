@@ -48,7 +48,7 @@ type Connection interface {
 	// Subscribes to topic, using handler as the callback for arriving events.
 	//
 	// The method blocks until the subscription is forwarded to the relay, or an
-	// error occures, in which case an iris.Error is returned.
+	// error occurs, in which case an iris.Error is returned.
 	//
 	// Double subscription is considered a programming error and will result in a
 	// panic!
@@ -58,13 +58,13 @@ type Connection interface {
 	// subscribers receive the message (best effort).
 	//
 	// The method does blocks until the message is forwarded to the relay, or an
-	// error occures, in which case an iris.Error is returned.
+	// error occurs, in which case an iris.Error is returned.
 	Publish(topic string, msg []byte) error
 
 	// Unsubscribes from topic, receiving no more event notifications for it.
 	//
 	// The method does blocks until the unsubscription is forwarded to the relay,
-	// or an error occures, in which case an iris.Error is returned.
+	// or an error occurs, in which case an iris.Error is returned.
 	//
 	// Unsubscribing from a topic not subscribed to is considered a programming
 	// error and will result in a panic!
@@ -124,14 +124,14 @@ type ConnectionHandler interface {
 	HandleBroadcast(msg []byte)
 
 	// Handles a request (msg), returning the reply that should be forwarded back
-	// to the caller. If the method crashes, nothing is retuned and the caller
+	// to the caller. If the method crashes, nothing is returned and the caller
 	// will eventually time out.
 	HandleRequest(msg []byte) []byte
 
 	// Handles the request to open a direct tunnel.
 	HandleTunnel(tun Tunnel)
 
-	// Handles the unexpecter termination of the relay conenction.
+	// Handles the unexpected termination of the relay connection.
 	HandleDrop(reason error)
 }
 

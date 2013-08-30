@@ -89,7 +89,7 @@ func (r *relay) handleTunnelReply(tunId uint64, buf int, timeout bool) {
 	tun.handleInit(buf, timeout)
 }
 
-// Forwards a tunnel send acknowledgement to the specific tunnel.
+// Forwards a tunnel send acknowledgment to the specific tunnel.
 func (r *relay) handleTunnelAck(tunId uint64) {
 	// Retrieve the tunnel
 	r.tunLock.RLock()

@@ -96,7 +96,7 @@ func TestReqRepMulti(t *testing.T) {
 			if err != nil {
 				t.Fatalf("connection failed: %v.", err)
 			}
-			// Nofity parent and wait for continuation permission
+			// Notify parent and wait for continuation permission
 			start.Done()
 			proc.Wait()
 
@@ -132,7 +132,7 @@ func TestReqRepMulti(t *testing.T) {
 	kill.Wait()
 }
 
-// Benchmarks the passthrough of a single request-reply.
+// Benchmarks the pass-through of a single request-reply.
 func BenchmarkReqRepLatency(b *testing.B) {
 	// Set up the connection
 	app := "bench-reqrep-latency"

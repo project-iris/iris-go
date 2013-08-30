@@ -36,7 +36,7 @@ type relay struct {
 	// Network layer fields
 	sock     net.Conn          // Network connection to the iris node
 	sockBuf  *bufio.ReadWriter // Buffered access to the network socket
-	sockLock sync.Mutex        // Mutex to atomise message sending
+	sockLock sync.Mutex        // Mutex to atomize message sending
 
 	// Bookkeeping fields
 	init chan struct{}   // Init channel to receive a success signal

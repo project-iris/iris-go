@@ -43,7 +43,7 @@ func (t *tunnel) Send(msg []byte, timeout time.Duration) error {
 			panic(fmt.Sprintf("iris: invalid timeout %d < 1ms", timeoutms))
 		}
 	}
-	// Create (the possibly nil) timeout signaller
+	// Create (the possibly nil) timeout signaler
 	var after <-chan time.Time
 	if timeout != 0 {
 		after = time.After(timeout)
@@ -68,7 +68,7 @@ func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
 			panic(fmt.Sprintf("iris: invalid timeout %d < 1ms", timeoutms))
 		}
 	}
-	// Create the timeout signaller
+	// Create the timeout signaler
 	var after <-chan time.Time
 	if timeout != 0 {
 		after = time.After(time.Duration(timeout) * time.Millisecond)
@@ -188,7 +188,7 @@ func (r *relay) acceptTunnel(tmpId uint64, buf int) (Tunnel, error) {
 	return tun, nil
 }
 
-// Finalizes the tunneling initiation by setting the output buffer or signalling
+// Finalizes the tunneling initiation by setting the output buffer or signaling
 // a timeout.
 func (t *tunnel) handleInit(buf int, timeout bool) {
 	if !timeout {
@@ -217,7 +217,7 @@ func (t *tunnel) handleData(msg []byte) {
 	}
 }
 
-// Handles the gracefull remote closure of the tunnel.
+// Handles the graceful remote closure of the tunnel.
 func (t *tunnel) handleClose() {
 	// Nil out the buffers to block send and receive ops
 	t.itoa = nil

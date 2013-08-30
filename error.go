@@ -14,7 +14,7 @@ type Error interface {
 	Timeout() bool
 }
 
-// Relay error implemneting the Error interface.
+// Relay error implementing the Error interface.
 type relayError struct {
 	message string
 	timeout bool

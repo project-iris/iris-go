@@ -62,7 +62,7 @@ func TestTunnelSingle(t *testing.T) {
 	// Open a tunnel to self
 	tun, err := conn.Tunnel(app, 250*time.Millisecond)
 	if err != nil {
-		t.Fatalf("tunelling failed: %v.", err)
+		t.Fatalf("tunneling failed: %v.", err)
 	}
 	defer tun.Close()
 
@@ -110,14 +110,14 @@ func TestTunnelMulti(t *testing.T) {
 			if err != nil {
 				t.Fatalf("connection failed: %v.", err)
 			}
-			// Nofity parent and wait for continuation permission
+			// Notify parent and wait for continuation permission
 			start.Done()
 			proc.Wait()
 
 			// Open a tunnel to the group
 			tun, err := conn.Tunnel(app, 500*time.Millisecond)
 			if err != nil {
-				t.Fatalf("tunelling failed: %v.", err)
+				t.Fatalf("tunneling failed: %v.", err)
 			}
 			// Serialize a load of messages
 			for i := 0; i < messages; i++ {

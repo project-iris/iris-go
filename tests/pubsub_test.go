@@ -30,7 +30,7 @@ func (s *subscriber) HandleEvent(msg []byte) {
 	s.msgs <- msg
 }
 
-// Subscribes to a handfull of topics, and publishes to each a batch of messages.
+// Subscribes to a handful of topics, and publishes to each a batch of messages.
 func TestPubSubSingle(t *testing.T) {
 	// Configure the test
 	topics := 75
@@ -169,7 +169,7 @@ func TestPubSubMulti(t *testing.T) {
 	term.Wait()
 }
 
-// Benchmarks the passthrough of a single message publish.
+// Benchmarks the pass-through of a single message publish.
 func BenchmarkPubSubLatency(b *testing.B) {
 	// Configure the benchmark
 	app := "bench-pubsub-latency"
@@ -200,7 +200,7 @@ func BenchmarkPubSubLatency(b *testing.B) {
 	}
 }
 
-// Benchmarks the passthrough of a stream of publishes.
+// Benchmarks the pass-through of a stream of publishes.
 func BenchmarkPubSubThroughput2Threads(b *testing.B) {
 	benchmarkPubSubThroughput(2, b)
 }

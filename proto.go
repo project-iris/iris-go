@@ -335,7 +335,7 @@ func (r *relay) recvBool() (bool, error) {
 func (r *relay) recvVarint() (uint64, error) {
 	var num uint64
 	for i := uint(0); ; i++ {
-		// Retreive the next byte of the varint
+		// Retrieve the next byte of the varint
 		b, err := r.recvByte()
 		if err != nil {
 			return 0, err

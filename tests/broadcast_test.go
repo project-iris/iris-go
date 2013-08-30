@@ -55,7 +55,7 @@ func TestBroadcastSingle(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Broadcast a handfull of messages to onself
+	// Broadcast a handful of messages to oneself
 	messages := make(map[string]struct{})
 	for i := 0; i < count; i++ {
 		// Generate a new random message and store it
@@ -83,7 +83,7 @@ func TestBroadcastSingle(t *testing.T) {
 	}
 }
 
-// Starts a numbef of concurrent processes, each broadcasting to the whole pool.
+// Starts a number of concurrent processes, each broadcasting to the whole pool.
 func TestBroadcastMulti(t *testing.T) {
 	// Configure the test
 	servers := 100
@@ -106,7 +106,7 @@ func TestBroadcastMulti(t *testing.T) {
 			if err != nil {
 				t.Fatalf("connection failed: %v.", err)
 			}
-			// Nofity parent and wait for continuation permission
+			// Notify parent and wait for continuation permission
 			start.Done()
 			proc.Wait()
 
