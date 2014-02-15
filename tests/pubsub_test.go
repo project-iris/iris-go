@@ -50,14 +50,15 @@ func TestPubSubSingle(t *testing.T) {
 	// Subscribe to the topics
 	subscriptions := make(map[string]chan []byte)
 	for i := 0; i < topics; i++ {
-		// Create the even buffer
+		// Create the event buffer
 		buffer := make(chan []byte, events)
 		subscriptions[names[i]] = buffer
 
-		// Subscribe with the buffer
+		// Subscribe with the buffer (and sleep a bit for state propagation)
 		if err := conn.Subscribe(names[i], &subscriber{msgs: buffer}); err != nil {
 			t.Fatalf("subscription failed: %v.", err)
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	// Send some random events and store them for verification
 	messages := make(map[[2]string]struct{})
