@@ -12,12 +12,13 @@ package tests
 import (
 	"bytes"
 	"crypto/rand"
-	"github.com/karalabe/iris-go"
-	"github.com/karalabe/iris/pool"
 	"io"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/karalabe/iris-go"
+	"github.com/karalabe/iris/pool"
 )
 
 // Connection handler for the req/rep tests.
@@ -152,6 +153,10 @@ func BenchmarkReqRepLatency(b *testing.B) {
 }
 
 // Benchmarks parallel request-reply.
+func BenchmarkReqRepThroughput1Threads(b *testing.B) {
+	benchmarkReqRepThroughput(1, b)
+}
+
 func BenchmarkReqRepThroughput2Threads(b *testing.B) {
 	benchmarkReqRepThroughput(2, b)
 }
@@ -206,4 +211,6 @@ func benchmarkReqRepThroughput(threads int, b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		<-done
 	}
+	b.StopTimer()
+	workers.Terminate(true)
 }

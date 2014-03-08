@@ -12,12 +12,13 @@ package tests
 import (
 	"bytes"
 	"crypto/rand"
-	"github.com/karalabe/iris-go"
-	"github.com/karalabe/iris/pool"
 	"io"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/karalabe/iris-go"
+	"github.com/karalabe/iris/pool"
 )
 
 // Connection handler for the broadcast tests.
@@ -161,6 +162,10 @@ func BenchmarkBroadcastLatency(b *testing.B) {
 }
 
 // Benchmarks broadcasting a stream of messages
+func BenchmarkBroadcastThroughput1Threads(b *testing.B) {
+	benchmarkBroadcastThroughput(1, b)
+}
+
 func BenchmarkBroadcastThroughput2Threads(b *testing.B) {
 	benchmarkBroadcastThroughput(2, b)
 }
@@ -204,17 +209,19 @@ func benchmarkBroadcastThroughput(threads int, b *testing.B) {
 
 	// Create the thread pool with the concurrent broadcasts
 	workers := pool.NewThreadPool(threads)
-	workers.Schedule(func() {
-		for i := 0; i < b.N; i++ {
+	for i := 0; i < b.N; i++ {
+		workers.Schedule(func() {
 			if err := conn.Broadcast(app, []byte{byte(i)}); err != nil {
 				b.Fatalf("broadcast failed: %v.", err)
 			}
-		}
-	})
+		})
+	}
 	// Reset timer and benchmark the message transfer
 	b.ResetTimer()
 	workers.Start()
 	for i := 0; i < b.N; i++ {
 		<-handler.msgs
 	}
+	b.StopTimer()
+	workers.Terminate(true)
 }

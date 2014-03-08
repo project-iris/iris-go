@@ -13,12 +13,13 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
-	"github.com/karalabe/iris-go"
-	"github.com/karalabe/iris/pool"
 	"io"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/karalabe/iris-go"
+	"github.com/karalabe/iris/pool"
 )
 
 // Connection handler for the pub/sub tests.
@@ -202,6 +203,10 @@ func BenchmarkPubSubLatency(b *testing.B) {
 }
 
 // Benchmarks the pass-through of a stream of publishes.
+func BenchmarkPubSubThroughput1Threads(b *testing.B) {
+	benchmarkPubSubThroughput(1, b)
+}
+
 func BenchmarkPubSubThroughput2Threads(b *testing.B) {
 	benchmarkPubSubThroughput(2, b)
 }
@@ -252,17 +257,19 @@ func benchmarkPubSubThroughput(threads int, b *testing.B) {
 
 	// Create the thread pool with the concurrent publishes
 	workers := pool.NewThreadPool(threads)
-	workers.Schedule(func() {
-		for i := 0; i < b.N; i++ {
+	for i := 0; i < b.N; i++ {
+		workers.Schedule(func() {
 			if err := conn.Publish(topic, []byte{byte(i)}); err != nil {
 				b.Fatalf("iter %d: failed to publish: %v.", i, err)
 			}
-		}
-	})
+		})
+	}
 	// Reset timer and benchmark the message transfer
 	b.ResetTimer()
 	workers.Start()
 	for i := 0; i < b.N; i++ {
 		<-handler.msgs
 	}
+	b.StopTimer()
+	workers.Terminate(true)
 }
