@@ -1,11 +1,8 @@
-// Iris Go Binding
-// Copyright 2013 Peter Szilagyi. All rights reserved.
+// Copyright (c) 2013 Project Iris. All rights reserved.
 //
 // The current language binding is an official support library of the Iris
-// decentralized messaging framework, and as such, the same licensing terms
-// hold. For details please see http://github.com/karalabe/iris/LICENSE.md
-//
-// Author: peterke@gmail.com (Peter Szilagyi)
+// cloud messaging framework, and as such, the same licensing terms apply.
+// For details please see http://iris.karalabe.com/downloads#License
 
 package tests
 
@@ -18,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/karalabe/iris-go"
-	"github.com/karalabe/iris/pool"
+	"github.com/project-iris/iris-go"
+	"github.com/project-iris/iris/pool"
 )
 
 // Connection handler for the pub/sub tests.
