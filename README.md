@@ -12,7 +12,7 @@ It is a completely decentralized messaging solution for simplifying the design a
 
 You can find further infos on the [Iris website](http://iris.karalabe.com) and details of the above features in the [Core concepts](http://iris.karalabe.com/book/core_concepts) section of [The book of Iris](http://iris.karalabe.com/book). For the scientifically inclined, a small collection of [papers](http://iris.karalabe.com/papers) is also available featuring Iris.
 
-There is a growing community at Twitter [@iriscmf](https://twitter.com/iriscmf), on Google groups [project-iris](https://groups.google.com/group/project-iris) and GitHub [project-iris](https://github.com/project-iris).
+There is a growing community on Twitter [@iriscmf](https://twitter.com/iriscmf), Google groups [project-iris](https://groups.google.com/group/project-iris) and GitHub [project-iris](https://github.com/project-iris).
 
   Installation
 ----------------
@@ -30,7 +30,7 @@ Refer to it as _iris_.
   Quickstart
 --------------
 
-The first step to using Iris through the this binding is setting up a local _relay_node_ through which to send messages, and connecting to it using the current library. You can find detailed infos on how to do this in [The book of Iris: Run, Forrest, Run](http://iris.karalabe.com/book/run_forrest_run).
+The first step to using Iris through this binding is setting up a local _relay_   _node_ through which to send messages, and connecting to it using the current library. You can find detailed infos on how to do this in [The book of Iris: Run, Forrest, Run](http://iris.karalabe.com/book/run_forrest_run).
 
 A demo presentation is also available, touching on all the features of the library through a handful of challenges and their solutions. The recommended version is the [playground](http://play.iris.karalabe.com/talks/binds/go.slide), containing modifiable and executable code snippets. A [read only version](http://iris.karalabe.com/talks/binds/go.slide) is also available.
 
