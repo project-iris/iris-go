@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/project-iris/iris-go"
 	"github.com/project-iris/iris/pool"
+	"gopkg.in/project-iris/iris-go.v0"
 )
 
 // Connection handler for the broadcast tests.

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/project-iris/iris-go"
+	"gopkg.in/project-iris/iris-go.v0"
 )
 
 // Tests a single startup and shutdown pair.

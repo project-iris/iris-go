@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/project-iris/iris-go"
+	"gopkg.in/project-iris/iris-go.v0"
 )
 
 // Connection handler for the tunnel tests.
