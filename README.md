@@ -3,7 +3,7 @@
 
 This is the official Go language binding for the Iris cloud messaging framework. If you are unfamiliar with Iris, please read the next introductory section. It contains a short summary, as well as some valuable pointers on where you can discover more.
 
-  Iris background
+  Background
 -------------------
 
 Iris is an attempt at bringing the simplicity and elegance of cloud computing to the application layer. Consumer clouds provide unlimited virtual machines at the click of a button, but leaves it to developer to wire them together. Iris ensures that you can forget about networking challenges and instead focus on solving your own domain problems.
@@ -12,7 +12,27 @@ It is a completely decentralized messaging solution for simplifying the design a
 
 You can find further infos on the [Iris website](http://iris.karalabe.com) and details of the above features in the [Core concepts](http://iris.karalabe.com/book/core_concepts) section of [The book of Iris](http://iris.karalabe.com/book). For the scientifically inclined, a small collection of [papers](http://iris.karalabe.com/papers) is also available featuring Iris.
 
-There is also a growing community at Twitter [@iriscmf](https://twitter.com/iriscmf), on Google groups [project-iris](https://groups.google.com/group/project-iris) and GitHub [project-iris](https://github.com/project-iris).
+There is a growing community at Twitter [@iriscmf](https://twitter.com/iriscmf), on Google groups [project-iris](https://groups.google.com/group/project-iris) and GitHub [project-iris](https://github.com/project-iris).
+
+  Installation
+----------------
+
+To get the package, execute:
+
+    go get gopkg.in/project-iris/iris-go.v0
+
+To import this package, add the following line to your code:
+
+    import "gopkg.in/project-iris/iris-go.v0"
+
+Refer to it as _iris_.
+
+  Quickstart
+--------------
+
+The first step to using Iris through the this binding is setting up a local _relay_node_ through which to send messages, and connecting to it using the current library. You can find detailed infos on how to do this in [The book of Iris: Run, Forrest, Run](http://iris.karalabe.com/book/run_forrest_run).
+
+A demo presentation is also available, touching on all the features of the library through a handful of challenges and their solutions. The recommended version is the [playground](http://play.iris.karalabe.com/talks/binds/go.slide), containing modifiable and executable code snippets. A [read only version](http://iris.karalabe.com/talks/binds/go.slide) is also available.
 
   Contributions
 -----------------
