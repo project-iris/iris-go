@@ -30,7 +30,7 @@ Refer to it as _iris_.
   Quickstart
 --------------
 
-The first step to using Iris through this binding is setting up a local _relay_   _node_ through which to send messages, and connecting to it using the current library. Detailed infos in [The book of Iris: Run, Forrest, Run](http://iris.karalabe.com/book/run_forrest_run).
+The first step to using Iris through this binding is setting up a local _relay_ _node_ through which to send messages, and connecting to it using the current library. Detailed infos in [The book of Iris: Run, Forrest, Run](http://iris.karalabe.com/book/run_forrest_run).
 
 A demo presentation is also available, touching on all the features of the library through a handful of challenges and their solutions. The recommended version is the [playground](http://play.iris.karalabe.com/talks/binds/go.slide), containing modifiable and executable code snippets. A [read only version](http://iris.karalabe.com/talks/binds/go.slide) is also available.
 
