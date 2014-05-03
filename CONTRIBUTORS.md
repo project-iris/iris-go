@@ -1,0 +1,1 @@
+The current language binding is an official support library of the Iris cloud messaging framework, and as such, the list contributors can be found merged with all others in the master repository at https://github.com/project-iris/iris/blob/master/CONTRIBUTORS.md.
