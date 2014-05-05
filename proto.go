@@ -8,12 +8,11 @@
 
 package iris
 
-import (
-	"fmt"
-)
+import "fmt"
 
 const (
 	opInit     byte = iota // Connection initialization
+	opDeny                 // Connection denial
 	opBcast                // Application broadcast
 	opReq                  // Application request
 	opRep                  // Application reply
@@ -28,8 +27,12 @@ const (
 	opTunClose             // Tunnel closing
 )
 
-// Relay protocol version
-var relayVersion = "v1.0"
+// Protocol constants
+var (
+	protoVersion = "v1.0-draft2"
+	clientMagic  = "iris-client-magic"
+	relayMagic   = "iris-relay-magic"
+)
 
 // Serializes a single byte into the relay.
 func (r *relay) sendByte(data byte) error {
@@ -89,14 +92,17 @@ func (r *relay) sendFlush() error {
 }
 
 // Assembles and serializes an init packet into the relay.
-func (r *relay) sendInit(app string) error {
+func (r *relay) sendInit(cluster string) error {
 	if err := r.sendByte(opInit); err != nil {
 		return err
 	}
-	if err := r.sendString(relayVersion); err != nil {
+	if err := r.sendString(clientMagic); err != nil {
 		return err
 	}
-	if err := r.sendString(app); err != nil {
+	if err := r.sendString(protoVersion); err != nil {
+		return err
+	}
+	if err := r.sendString(cluster); err != nil {
 		return err
 	}
 	return r.sendFlush()
@@ -375,14 +381,41 @@ func (r *relay) recvString() (string, error) {
 	}
 }
 
-// Retrieves a connection initialization response and returns whether ok.
-func (r *relay) procInit() error {
-	if op, err := r.recvByte(); err != nil {
-		return err
-	} else if op != opInit {
-		return permError(fmt.Errorf("protocol violation"))
+// Retrieves a connection initialization response.
+func (r *relay) procInit() (string, error) {
+	// Retrieve the success flag
+	op, err := r.recvByte()
+	if err != nil {
+		return "", err
 	}
-	return nil
+	// Verify the relay magic string
+	switch {
+	case op == opInit || op == opDeny:
+		if magic, err := r.recvString(); err != nil {
+			return "", err
+		} else if magic != relayMagic {
+			return "", fmt.Errorf("protocol violation: invalid relay magic: %s", magic)
+		}
+	}
+	// Depending on success or failure, proceed and return
+	switch op {
+	case opInit:
+		// Read the highest supported protocol version
+		if version, err := r.recvString(); err != nil {
+			return "", err
+		} else {
+			return version, nil
+		}
+	case opDeny:
+		// Read the denial reason
+		if reason, err := r.recvString(); err != nil {
+			return "", err
+		} else {
+			return "", fmt.Errorf("connection denied: %s", reason)
+		}
+	default:
+		panic("Unreachable code")
+	}
 }
 
 // Retrieves a remote broadcast message from the relay and notifies the handler.

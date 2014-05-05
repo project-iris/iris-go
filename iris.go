@@ -14,7 +14,7 @@ import (
 // Returns the relay protocol version implemented. Connecting to an Iris node
 // will fail unless the versions match exactly.
 func Version() string {
-	return relayVersion
+	return protoVersion
 }
 
 // Connects to the iris message relay running locally, registering with the id

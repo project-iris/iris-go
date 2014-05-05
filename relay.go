@@ -72,7 +72,7 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 	if err := rel.sendInit(app); err != nil {
 		return nil, err
 	}
-	if err := rel.procInit(); err != nil {
+	if _, err := rel.procInit(); err != nil {
 		return nil, err
 	}
 	// All ok, start processing messages and return
