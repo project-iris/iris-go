@@ -17,8 +17,8 @@ import (
 // Tests a single startup and shutdown pair.
 func TestConnectSingle(t *testing.T) {
 	// Connect to the local relay
-	app := "test-connect-single"
-	if conn, err := iris.Connect(relayPort, app, nil); err != nil {
+	cluster := "test-connect-single"
+	if conn, err := iris.Connect(relayPort, cluster, nil); err != nil {
 		t.Fatalf("connection failed: %v.", err)
 	} else {
 		// Disconnect from the local relay
@@ -46,32 +46,39 @@ func TestConnectConcurrent(t *testing.T) {
 
 // Tests multiple parallel startups and shutdowns.
 func TestConnectParallel(t *testing.T) {
+	// Configure the test
+	servers := 100
+
 	start := new(sync.WaitGroup)
 	term := new(sync.WaitGroup)
 	proc := new(sync.WaitGroup)
 	proc.Add(1)
 
 	// Start a batch of parallel connections
-	for i := 0; i < 100; i++ {
+	errs := make(chan error, servers)
+	for i := 0; i < servers; i++ {
 		start.Add(1)
 		go func() {
 			// Connect to the local relay
-			app := "test-connect-parallel"
-			conn, err := iris.Connect(relayPort, app, nil)
+			cluster := "test-connect-parallel"
+			conn, err := iris.Connect(relayPort, cluster, nil)
 			if err != nil {
-				t.Fatalf("connection failed: %v.", err)
+				errs <- fmt.Errorf("connection failed: %v", err)
+				start.Done()
+				return
 			}
 			start.Done()
 			term.Add(1)
 
 			// Wait till everybody connected
 			proc.Wait()
+			defer term.Done()
 
 			// Disconnect from the local relay
 			if err := conn.Close(); err != nil {
-				t.Fatalf("connection close failed: %v.", err)
+				errs <- fmt.Errorf("connection close failed: %v", err)
+				return
 			}
-			term.Done()
 		}()
 	}
 	// Schedule the parallel operations
@@ -83,8 +90,8 @@ func TestConnectParallel(t *testing.T) {
 // Benchmarks connection setup
 func BenchmarkConnect(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		app := fmt.Sprintf("bench-connect-%d", i)
-		if conn, err := iris.Connect(relayPort, app, nil); err != nil {
+		cluster := fmt.Sprintf("bench-connect-%d", i)
+		if conn, err := iris.Connect(relayPort, cluster, nil); err != nil {
 			b.Fatalf("iteration %d: connection failed: %v.", i, err)
 		} else {
 			defer conn.Close()

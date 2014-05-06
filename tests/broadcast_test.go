@@ -9,6 +9,7 @@ package tests
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -46,8 +47,8 @@ func TestBroadcastSingle(t *testing.T) {
 	input := make(chan []byte, count)
 
 	// Connect to the Iris network
-	app := "test-broadcast-single"
-	conn, err := iris.Connect(relayPort, app, &broadcaster{msgs: input})
+	cluster := "test-broadcast-single"
+	conn, err := iris.Connect(relayPort, cluster, &broadcaster{msgs: input})
 	if err != nil {
 		t.Fatalf("connection failed: %v.", err)
 	}
@@ -62,7 +63,7 @@ func TestBroadcastSingle(t *testing.T) {
 		messages[string(msg)] = struct{}{}
 
 		// Broadcast the message
-		if err := conn.Broadcast(app, msg); err != nil {
+		if err := conn.Broadcast(cluster, msg); err != nil {
 			t.Fatalf("broadcast failed: %v.", err)
 		}
 	}
@@ -93,25 +94,33 @@ func TestBroadcastMulti(t *testing.T) {
 	proc.Add(1)
 
 	// Start up the concurrent broadcasters
+	errs := make(chan error, servers)
 	for i := 0; i < servers; i++ {
 		start.Add(1)
 		term.Add(1)
 		go func() {
+			defer term.Done()
+
 			// Connect to the relay
-			app := "test-broadcast-multi"
+			cluster := "test-broadcast-multi"
 			input := make(chan []byte, servers*broadcasts)
-			conn, err := iris.Connect(relayPort, app, &broadcaster{msgs: input})
+			conn, err := iris.Connect(relayPort, cluster, &broadcaster{msgs: input})
 			if err != nil {
-				t.Fatalf("connection failed: %v.", err)
+				errs <- fmt.Errorf("connection failed: %v", err)
+				start.Done()
+				return
 			}
+			defer conn.Close()
+
 			// Notify parent and wait for continuation permission
 			start.Done()
 			proc.Wait()
 
 			// Broadcast the whole group
 			for j := 0; j < broadcasts; j++ {
-				if err := conn.Broadcast(app, []byte("BROADCAST")); err != nil {
-					t.Fatalf("broadcast failed: %v.", err)
+				if err := conn.Broadcast(cluster, []byte("BROADCAST")); err != nil {
+					errs <- fmt.Errorf("broadcast failed: %v", err)
+					return
 				}
 			}
 			// Retrieve and verify all broadcasts
@@ -119,32 +128,42 @@ func TestBroadcastMulti(t *testing.T) {
 				select {
 				case msg := <-input:
 					if bytes.Compare(msg, []byte("BROADCAST")) != 0 {
-						t.Fatalf("broadcast message mismatch: have %v, want %v.", msg, []byte("BROADCAST"))
+						errs <- fmt.Errorf("broadcast message mismatch: have %v, want %v", msg, []byte("BROADCAST"))
+						return
 					}
 				case <-time.After(5 * time.Second):
-					t.Fatalf("broadcast timed out.")
+					errs <- fmt.Errorf("broadcast timed out")
+					return
 				}
 			}
-			// Terminate the server and signal tester
-			conn.Close()
-			term.Done()
 		}()
 	}
-	// Schedule the parallel operations
+	// Wait for all go-routines to attach and verify
 	start.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("startup failed: %v.", err)
+	default:
+	}
+	// Permit the go-routines to continue
 	proc.Done()
 	term.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("broadcasting failed: %v.", err)
+	default:
+	}
 }
 
 // Benchmarks broadcasting a single message
 func BenchmarkBroadcastLatency(b *testing.B) {
 	// Configure the benchmark
-	app := "bench-broadcast-latency"
+	cluster := "bench-broadcast-latency"
 	handler := &broadcaster{
 		msgs: make(chan []byte, b.N),
 	}
 	// Set up the connection
-	conn, err := iris.Connect(relayPort, app, handler)
+	conn, err := iris.Connect(relayPort, cluster, handler)
 	if err != nil {
 		b.Fatalf("connection failed: %v.", err)
 	}
@@ -153,7 +172,7 @@ func BenchmarkBroadcastLatency(b *testing.B) {
 	// Reset timer and benchmark the message transfer
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		conn.Broadcast(app, []byte{byte(i)})
+		conn.Broadcast(cluster, []byte{byte(i)})
 		<-handler.msgs
 	}
 }
@@ -193,12 +212,12 @@ func BenchmarkBroadcastThroughput128Threads(b *testing.B) {
 
 func benchmarkBroadcastThroughput(threads int, b *testing.B) {
 	// Configure the benchmark
-	app := "bench-broadcast-throughput"
+	cluster := "bench-broadcast-throughput"
 	handler := &broadcaster{
 		msgs: make(chan []byte, b.N),
 	}
 	// Set up the connection
-	conn, err := iris.Connect(relayPort, app, handler)
+	conn, err := iris.Connect(relayPort, cluster, handler)
 	if err != nil {
 		b.Fatalf("connection failed: %v.", err)
 	}
@@ -208,7 +227,7 @@ func benchmarkBroadcastThroughput(threads int, b *testing.B) {
 	workers := pool.NewThreadPool(threads)
 	for i := 0; i < b.N; i++ {
 		workers.Schedule(func() {
-			if err := conn.Broadcast(app, []byte{byte(i)}); err != nil {
+			if err := conn.Broadcast(cluster, []byte{byte(i)}); err != nil {
 				b.Fatalf("broadcast failed: %v.", err)
 			}
 		})

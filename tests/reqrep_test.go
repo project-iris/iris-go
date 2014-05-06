@@ -9,6 +9,7 @@ package tests
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -44,8 +45,8 @@ func TestReqRepSingle(t *testing.T) {
 	requests := 1000
 
 	// Connect to the Iris network
-	app := "test-reqrep-single"
-	conn, err := iris.Connect(relayPort, app, new(requester))
+	cluster := "test-reqrep-single"
+	conn, err := iris.Connect(relayPort, cluster, new(requester))
 	if err != nil {
 		t.Fatalf("connection failed: %v.", err)
 	}
@@ -58,7 +59,7 @@ func TestReqRepSingle(t *testing.T) {
 		io.ReadFull(rand.Reader, req)
 
 		// Send request, verify reply
-		rep, err := conn.Request(app, req, 250*time.Millisecond)
+		rep, err := conn.Request(cluster, req, 250*time.Millisecond)
 		if err != nil {
 			t.Fatalf("request failed: %v.", err)
 		}
@@ -83,17 +84,24 @@ func TestReqRepMulti(t *testing.T) {
 	kill := new(sync.WaitGroup)
 
 	// Start up the concurrent requesters
+	errs := make(chan error, servers)
 	for i := 0; i < servers; i++ {
 		start.Add(1)
 		done.Add(1)
 		kill.Add(1)
 		go func() {
+			defer kill.Done()
+
 			// Connect to the relay
-			app := "test-reqrep-multi"
-			conn, err := iris.Connect(relayPort, app, new(requester))
+			cluster := "test-reqrep-multi"
+			conn, err := iris.Connect(relayPort, cluster, new(requester))
 			if err != nil {
-				t.Fatalf("connection failed: %v.", err)
+				errs <- fmt.Errorf("connection failed: %v", err)
+				start.Done()
+				return
 			}
+			defer conn.Close()
+
 			// Notify parent and wait for continuation permission
 			start.Done()
 			proc.Wait()
@@ -105,27 +113,39 @@ func TestReqRepMulti(t *testing.T) {
 				io.ReadFull(rand.Reader, req)
 
 				// Send request, verify reply
-				rep, err := conn.Request(app, req, 250*time.Millisecond)
+				rep, err := conn.Request(cluster, req, 250*time.Millisecond)
 				if err != nil {
-					t.Fatalf("request failed: %v.", err)
+					errs <- fmt.Errorf("request failed: %v", err)
+					done.Done()
+					return
 				}
 				if bytes.Compare(rep, req) != 0 {
-					t.Fatalf("reply mismatch: have %v, want %v.", rep, req)
+					errs <- fmt.Errorf("reply mismatch: have %v, want %v.", rep, req)
+					done.Done()
+					return
 				}
 			}
 			// Wait till everybody else finishes
 			done.Done()
 			term.Wait()
-
-			// Terminate the server and signal tester
-			conn.Close()
-			kill.Done()
 		}()
 	}
-	// Schedule the parallel operations
+	// Wait for all go-routines to attach and verify
 	start.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("startup failed: %v.", err)
+	default:
+	}
+	// Permit the go-routines to continue
 	proc.Done()
 	done.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("requesting failed: %v.", err)
+	default:
+	}
+	// Sync up the terminations
 	term.Done()
 	kill.Wait()
 }
@@ -133,8 +153,8 @@ func TestReqRepMulti(t *testing.T) {
 // Benchmarks the pass-through of a single request-reply.
 func BenchmarkReqRepLatency(b *testing.B) {
 	// Set up the connection
-	app := "bench-reqrep-latency"
-	conn, err := iris.Connect(relayPort, app, new(requester))
+	cluster := "bench-reqrep-latency"
+	conn, err := iris.Connect(relayPort, cluster, new(requester))
 	if err != nil {
 		b.Fatalf("connection failed: %v.", err)
 	}
@@ -143,7 +163,7 @@ func BenchmarkReqRepLatency(b *testing.B) {
 	// Reset timer and benchmark the message transfer
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := conn.Request(app, []byte{byte(i)}, 10*time.Second); err != nil {
+		if _, err := conn.Request(cluster, []byte{byte(i)}, 10*time.Second); err != nil {
 			b.Fatalf("request failed: %v.", err)
 		}
 	}
@@ -184,8 +204,8 @@ func BenchmarkReqRepThroughput128Threads(b *testing.B) {
 
 func benchmarkReqRepThroughput(threads int, b *testing.B) {
 	// Set up the connection
-	app := "bench-reqrep-throughput"
-	conn, err := iris.Connect(relayPort, app, new(requester))
+	cluster := "bench-reqrep-throughput"
+	conn, err := iris.Connect(relayPort, cluster, new(requester))
 	if err != nil {
 		b.Fatalf("connection failed: %v.", err)
 	}
@@ -197,7 +217,7 @@ func benchmarkReqRepThroughput(threads int, b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		workers.Schedule(func() {
 			defer func() { done <- struct{}{} }()
-			if _, err := conn.Request(app, []byte{byte(i)}, 60*time.Second); err != nil {
+			if _, err := conn.Request(cluster, []byte{byte(i)}, 60*time.Second); err != nil {
 				b.Fatalf("request failed: %v.", err)
 			}
 		})

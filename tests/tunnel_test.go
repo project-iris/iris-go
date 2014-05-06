@@ -50,15 +50,15 @@ func TestTunnelSingle(t *testing.T) {
 	messages := 1000
 
 	// Connect to the Iris network
-	app := "test-tunnel-single"
-	conn, err := iris.Connect(relayPort, app, new(tunneler))
+	cluster := "test-tunnel-single"
+	conn, err := iris.Connect(relayPort, cluster, new(tunneler))
 	if err != nil {
 		t.Fatalf("connection failed: %v.", err)
 	}
 	defer conn.Close()
 
 	// Open a tunnel to self
-	tun, err := conn.Tunnel(app, 250*time.Millisecond)
+	tun, err := conn.Tunnel(cluster, 250*time.Millisecond)
 	if err != nil {
 		t.Fatalf("tunneling failed: %v.", err)
 	}
@@ -97,39 +97,54 @@ func TestTunnelMulti(t *testing.T) {
 	kill := new(sync.WaitGroup)
 
 	// Start up the concurrent tunnelers
+	errs := make(chan error, servers)
 	for i := 0; i < servers; i++ {
 		start.Add(1)
 		done.Add(1)
 		kill.Add(1)
 		go func() {
+			defer kill.Done()
+
 			// Connect to the relay
-			app := "test-tunnel-multi"
-			conn, err := iris.Connect(relayPort, app, new(tunneler))
+			cluster := "test-tunnel-multi"
+			conn, err := iris.Connect(relayPort, cluster, new(tunneler))
 			if err != nil {
-				t.Fatalf("connection failed: %v.", err)
+				errs <- fmt.Errorf("connection failed: %v", err)
+				start.Done()
+				return
 			}
+			defer conn.Close()
+
 			// Notify parent and wait for continuation permission
 			start.Done()
 			proc.Wait()
 
 			// Open a tunnel to the group
-			tun, err := conn.Tunnel(app, 500*time.Millisecond)
+			tun, err := conn.Tunnel(cluster, 500*time.Millisecond)
 			if err != nil {
-				t.Fatalf("tunneling failed: %v.", err)
+				errs <- fmt.Errorf("tunneling failed: %v", err)
+				done.Done()
+				return
 			}
 			// Serialize a load of messages
 			for i := 0; i < messages; i++ {
 				if err := tun.Send([]byte(fmt.Sprintf("%d", i)), 500*time.Millisecond); err != nil {
-					t.Fatalf("send failed: %v.", err)
+					errs <- fmt.Errorf("send failed: %v", err)
+					done.Done()
+					return
 				}
 			}
 			// Read back the echo stream and verify
 			for i := 0; i < messages; i++ {
 				if msg, err := tun.Recv(500 * time.Millisecond); err != nil {
-					t.Fatalf("receive failed: %v.", err)
+					errs <- fmt.Errorf("receive failed: %v", err)
+					done.Done()
+					return
 				} else {
 					if res := fmt.Sprintf("%d", i); res != string(msg) {
-						t.Fatalf("message mismatch: have %v, want %v.", msg, string(res))
+						errs <- fmt.Errorf("message mismatch: have %v, want %v", msg, string(res))
+						done.Done()
+						return
 					}
 				}
 			}
@@ -139,31 +154,39 @@ func TestTunnelMulti(t *testing.T) {
 			// Wait till everybody else finishes
 			done.Done()
 			term.Wait()
-
-			// Terminate the server and signal tester
-			conn.Close()
-			kill.Done()
 		}()
 	}
-	// Schedule the parallel operations
+	// Wait for all go-routines to attach and verify
 	start.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("startup failed: %v.", err)
+	default:
+	}
+	// Permit the go-routines to continue
 	proc.Done()
 	done.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("requesting failed: %v.", err)
+	default:
+	}
+	// Sync up the terminations
 	term.Done()
 	kill.Wait()
 }
 
 func BenchmarkTunnelTransferLatency(b *testing.B) {
 	// Set up the connection
-	app := "bench-tunnel-latency"
-	conn, err := iris.Connect(relayPort, app, new(tunneler))
+	cluster := "bench-tunnel-latency"
+	conn, err := iris.Connect(relayPort, cluster, new(tunneler))
 	if err != nil {
 		b.Fatalf("connection failed: %v.", err)
 	}
 	defer conn.Close()
 
 	// Create the tunnel
-	tun, err := conn.Tunnel(app, 250*time.Millisecond)
+	tun, err := conn.Tunnel(cluster, 250*time.Millisecond)
 	if err != nil {
 		b.Fatalf("tunneling failed: %v.", err)
 	}
@@ -182,15 +205,15 @@ func BenchmarkTunnelTransferLatency(b *testing.B) {
 
 func BenchmarkTunnelTransferThroughput(b *testing.B) {
 	// Set up the connection
-	app := "bench-tunnel-throughput"
-	conn, err := iris.Connect(relayPort, app, new(tunneler))
+	cluster := "bench-tunnel-throughput"
+	conn, err := iris.Connect(relayPort, cluster, new(tunneler))
 	if err != nil {
 		b.Fatalf("connection failed: %v.", err)
 	}
 	defer conn.Close()
 
 	// Create the tunnel
-	tun, err := conn.Tunnel(app, 250*time.Millisecond)
+	tun, err := conn.Tunnel(cluster, 250*time.Millisecond)
 	if err != nil {
 		b.Fatalf("tunneling failed: %v.", err)
 	}

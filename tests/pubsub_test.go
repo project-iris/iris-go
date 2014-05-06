@@ -38,8 +38,8 @@ func TestPubSubSingle(t *testing.T) {
 		names[i] = fmt.Sprintf("test-topic-%v", i)
 	}
 	// Connect to the Iris network
-	app := "test-pubsub-single"
-	conn, err := iris.Connect(relayPort, app, nil)
+	cluster := "test-pubsub-single"
+	conn, err := iris.Connect(relayPort, cluster, nil)
 	if err != nil {
 		t.Fatalf("connection failed: %v.", err)
 	}
@@ -107,15 +107,20 @@ func TestPubSubMulti(t *testing.T) {
 	proc.Add(1)
 
 	// Start up the concurrent subscribers (and publishers)
+	errs := make(chan error, servers)
 	for i := 0; i < servers; i++ {
 		start.Add(1)
 		term.Add(1)
 		go func() {
+			defer term.Done()
+
 			// Connect to the Iris network
-			app := "test-pubsub-multi"
-			conn, err := iris.Connect(relayPort, app, nil)
+			cluster := "test-pubsub-multi"
+			conn, err := iris.Connect(relayPort, cluster, nil)
 			if err != nil {
-				t.Fatalf("connection failed: %v.", err)
+				errs <- fmt.Errorf("connection failed: %v", err)
+				start.Done()
+				return
 			}
 			defer conn.Close()
 
@@ -128,7 +133,9 @@ func TestPubSubMulti(t *testing.T) {
 
 				// Subscribe with the buffer
 				if err := conn.Subscribe(names[j], &subscriber{msgs: buffer}); err != nil {
-					t.Fatalf("subscription failed: %v.", err)
+					errs <- fmt.Errorf("subscription failed: %v.", err)
+					start.Done()
+					return
 				}
 			}
 			// Wait for permission to continue
@@ -139,7 +146,8 @@ func TestPubSubMulti(t *testing.T) {
 			for j := 0; j < topics; j++ {
 				for k := 0; k < events; k++ {
 					if err := conn.Publish(names[j], []byte(names[j])); err != nil {
-						t.Fatalf("publish failed: %v.", err)
+						errs <- fmt.Errorf("publish failed: %v", err)
+						return
 					}
 				}
 			}
@@ -150,34 +158,49 @@ func TestPubSubMulti(t *testing.T) {
 					case event := <-buffer:
 						// Make sure event is valid
 						if bytes.Compare([]byte(topic), event) != 0 {
-							t.Fatalf("invalid event: %v-%v.", topic, event)
+							errs <- fmt.Errorf("invalid event: %v-%v", topic, event)
+							return
 						}
 					case <-time.After(5 * time.Second):
-						t.Fatalf("publish receive timeout")
+						errs <- fmt.Errorf("publish receive timeout")
+						return
 					}
 				}
 			}
-			// Signal the parent of the termination
-			term.Done()
 		}()
 	}
 	// Schedule the parallel operations
+	// Wait for all go-routines to attach and verify
 	start.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("startup failed: %v.", err)
+	default:
+	}
+
+	// Sleep a bit to ensure subscriptions propagate through the system
 	time.Sleep(100 * time.Millisecond)
+
+	// Permit the go-routines to continue
 	proc.Done()
 	term.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("publishing failed: %v.", err)
+	default:
+	}
 }
 
 // Benchmarks the pass-through of a single message publish.
 func BenchmarkPubSubLatency(b *testing.B) {
 	// Configure the benchmark
-	app := "bench-pubsub-latency"
+	cluster := "bench-pubsub-latency"
 	topic := "bench-topic-latency"
 	handler := &subscriber{
 		msgs: make(chan []byte, b.N),
 	}
 	// Set up the connection
-	conn, err := iris.Connect(relayPort, app, nil)
+	conn, err := iris.Connect(relayPort, cluster, nil)
 	if err != nil {
 		b.Fatalf("connection failed: %v.", err)
 	}
@@ -234,13 +257,13 @@ func BenchmarkPubSubThroughput128Threads(b *testing.B) {
 
 func benchmarkPubSubThroughput(threads int, b *testing.B) {
 	// Configure the benchmark
-	app := "bench-pubsub-throughput"
+	cluster := "bench-pubsub-throughput"
 	topic := "bench-topic-throughput"
 	handler := &subscriber{
 		msgs: make(chan []byte, b.N),
 	}
 	// Set up the connection
-	conn, err := iris.Connect(relayPort, app, nil)
+	conn, err := iris.Connect(relayPort, cluster, nil)
 	if err != nil {
 		b.Fatalf("connection failed: %v.", err)
 	}
