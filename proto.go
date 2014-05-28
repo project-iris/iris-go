@@ -4,27 +4,37 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-// Contains the wire protocol for communicating with the Iris node.
+// Contains the wire protocol for communicating with the Iris relay endpoint.
+
+// The specification version implemented is v1.0-draft2, available at:
+// http://iris.karalabe.com/specs/relay-protocol-v1.0-draft2.pdf
 
 package iris
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+)
 
+// Packet opcodes
 const (
-	opInit     byte = iota // Connection initialization
-	opDeny                 // Connection denial
-	opBcast                // Application broadcast
-	opReq                  // Application request
-	opRep                  // Application reply
-	opSub                  // Topic subscription
-	opPub                  // Topic publish
-	opUnsub                // Topic subscription removal
-	opClose                // Connection closing
-	opTunReq               // Tunnel building request
-	opTunRep               // Tunnel building reply
-	opTunData              // Tunnel data transfer
-	opTunAck               // Tunnel data acknowledgment
-	opTunClose             // Tunnel closing
+	opInit  byte = 0x00 // Out: connection initiation           | In: connection acceptance
+	opDeny       = 0x01 // Out: <never sent>                    | In: connection refusal
+	opClose      = 0x02 // Out: connection tear-down initiation | In: connection tear-down notification
+
+	opBroadcast = 0x03 // Out: application broadcast initiation | In: application broadcast delivery
+	opRequest   = 0x04 // Out: application request initiation   | In: application request delivery
+	opReply     = 0x05 // Out: application reply initiation     | In: application reply delivery
+
+	opSubscribe   = 0x06 // Out: topic subscription             | In: <never received>
+	opUnsubscribe = 0x07 // Out: topic subscription removal     | In: <never received>
+	opPublish     = 0x08 // Out: topic event publish            | In: topic event delivery
+
+	opTunBuild    = 0x09 // Out: tunnel construction request    | In: tunnel initiation
+	opTunConfirm  = 0x0a // Out: tunnel confirmation            | In: tunnel construction result
+	opTunAllow    = 0x0b // Out: tunnel transfer allowance      | In: <same as out>
+	opTunTransfer = 0x0c // Out: tunnel data exchange           | In: <same as out>
+	opTunClose    = 0x0d // Out: tunnel termination request     | In: tunnel termination notification
 )
 
 // Protocol constants
@@ -34,64 +44,49 @@ var (
 	relayMagic   = "iris-relay-magic"
 )
 
-// Serializes a single byte into the relay.
+// Serializes a single byte into the relay connection.
 func (r *relay) sendByte(data byte) error {
-	if err := r.sockBuf.WriteByte(data); err != nil {
-		return permError(err)
-	}
-	return nil
+	return r.sockBuf.WriteByte(data)
 }
 
-// Serializes a boolean into the relay.
+// Serializes a boolean into the relay connection.
 func (r *relay) sendBool(data bool) error {
 	if data {
 		return r.sendByte(1)
-	} else {
-		return r.sendByte(0)
 	}
+	return r.sendByte(0)
 }
 
-// Serializes a variable int into the relay using base 128 encoding.
+// Serializes a variable int into the relay using base 128 encoding into the relay connection.
 func (r *relay) sendVarint(data uint64) error {
-	for {
-		if data > 127 {
-			// Internal byte, set the continuation flag and send
-			if err := r.sendByte(byte(128 + data%128)); err != nil {
-				return err
-			}
-			data /= 128
-		} else {
-			// Final byte, send and return
-			return r.sendByte(byte(data))
+	for data > 127 {
+		// Internal byte, set the continuation flag and send
+		if err := r.sendByte(byte(128 + data%128)); err != nil {
+			return err
 		}
+		data /= 128
 	}
+	// Final byte, send and return
+	return r.sendByte(byte(data))
 }
 
-// Serializes a length-tagged binary array into the relay.
+// Serializes a length-tagged binary array into the relay connection.
 func (r *relay) sendBinary(data []byte) error {
 	if err := r.sendVarint(uint64(len(data))); err != nil {
 		return err
 	}
-	if n, err := r.sockBuf.Write([]byte(data)); n != len(data) || err != nil {
-		return permError(err)
+	if _, err := r.sockBuf.Write([]byte(data)); err != nil {
+		return err
 	}
 	return nil
 }
 
-// Serializes a length-tagged string into the relay.
+// Serializes a length-tagged string into the relay connection.
 func (r *relay) sendString(data string) error {
 	return r.sendBinary([]byte(data))
 }
 
-// Flushes the output buffer into the network stream.
-func (r *relay) sendFlush() error {
-	if err := r.sockBuf.Flush(); err != nil {
-		return permError(err)
-	}
-	return nil
-}
-
-// Assembles and serializes an init packet into the relay.
+// Sends a connection initiation.
 func (r *relay) sendInit(cluster string) error {
 	if err := r.sendByte(opInit); err != nil {
 		return err
@@ -105,112 +100,10 @@ func (r *relay) sendInit(cluster string) error {
 	if err := r.sendString(cluster); err != nil {
 		return err
 	}
-	return r.sendFlush()
+	return r.sockBuf.Flush()
 }
 
-// Atomically sends an application broadcast message into the relay.
-func (r *relay) sendBroadcast(app string, msg []byte) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opBcast); err != nil {
-		return err
-	}
-	if err := r.sendString(app); err != nil {
-		return err
-	}
-	if err := r.sendBinary(msg); err != nil {
-		return err
-	}
-	return r.sendFlush()
-}
-
-// Atomically sends a request message into the relay.
-func (r *relay) sendRequest(reqId uint64, app string, req []byte, time int) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opReq); err != nil {
-		return err
-	}
-	if err := r.sendVarint(reqId); err != nil {
-		return err
-	}
-	if err := r.sendString(app); err != nil {
-		return err
-	}
-	if err := r.sendBinary(req); err != nil {
-		return err
-	}
-	if err := r.sendVarint(uint64(time)); err != nil {
-		return err
-	}
-	return r.sendFlush()
-}
-
-// Atomically sends a reply message into the relay.
-func (r *relay) sendReply(reqId uint64, rep []byte) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opRep); err != nil {
-		return err
-	}
-	if err := r.sendVarint(reqId); err != nil {
-		return err
-	}
-	if err := r.sendBinary(rep); err != nil {
-		return err
-	}
-	return r.sendFlush()
-}
-
-// Atomically sends a topic subscription message into the relay.
-func (r *relay) sendSubscribe(topic string) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opSub); err != nil {
-		return err
-	}
-	if err := r.sendString(topic); err != nil {
-		return err
-	}
-	return r.sendFlush()
-}
-
-// Atomically sends a topic publish message into the relay.
-func (r *relay) sendPublish(topic string, msg []byte) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opPub); err != nil {
-		return err
-	}
-	if err := r.sendString(topic); err != nil {
-		return err
-	}
-	if err := r.sendBinary(msg); err != nil {
-		return err
-	}
-	return r.sendFlush()
-}
-
-// Atomically sends a topic un-subscription message into the relay.
-func (r *relay) sendUnsubscribe(topic string) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opUnsub); err != nil {
-		return err
-	}
-	if err := r.sendString(topic); err != nil {
-		return err
-	}
-	return r.sendFlush()
-}
-
-// Atomically sends a close message into the relay.
+// Sends a connection tear-down initiation.
 func (r *relay) sendClose() error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
@@ -218,107 +111,211 @@ func (r *relay) sendClose() error {
 	if err := r.sendByte(opClose); err != nil {
 		return err
 	}
-	return r.sendFlush()
+	return r.sockBuf.Flush()
 }
 
-// Atomically sends a tunneling request into the relay.
-func (r *relay) sendTunnelRequest(tunId uint64, app string, buf int, time int) error {
+// Sends an application broadcast initiation.
+func (r *relay) sendBroadcast(cluster string, message []byte) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
 
-	if err := r.sendByte(opTunReq); err != nil {
+	if err := r.sendByte(opBroadcast); err != nil {
+		return err
+	}
+	if err := r.sendString(cluster); err != nil {
+		return err
+	}
+	if err := r.sendBinary(message); err != nil {
+		return err
+	}
+	return r.sockBuf.Flush()
+}
+
+// Sends an application request initiation.
+func (r *relay) sendRequest(id uint64, cluster string, request []byte, timeout int) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opRequest); err != nil {
+		return err
+	}
+	if err := r.sendVarint(id); err != nil {
+		return err
+	}
+	if err := r.sendString(cluster); err != nil {
+		return err
+	}
+	if err := r.sendBinary(request); err != nil {
+		return err
+	}
+	if err := r.sendVarint(uint64(timeout)); err != nil {
+		return err
+	}
+	return r.sockBuf.Flush()
+}
+
+// Sends an application reply initiation.
+func (r *relay) sendReply(id uint64, reply []byte, fault string) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opReply); err != nil {
+		return err
+	}
+	if err := r.sendVarint(id); err != nil {
+		return err
+	}
+	if len(fault) == 0 {
+		if err := r.sendBinary(reply); err != nil {
+			return err
+		}
+	} else {
+		if err := r.sendString(fault); err != nil {
+			return err
+		}
+	}
+	return r.sockBuf.Flush()
+}
+
+// Sends a topic subscription.
+func (r *relay) sendSubscribe(topic string) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opSubscribe); err != nil {
+		return err
+	}
+	if err := r.sendString(topic); err != nil {
+		return err
+	}
+	return r.sockBuf.Flush()
+}
+
+// Sends a topic subscription removal.
+func (r *relay) sendUnsubscribe(topic string) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opUnsubscribe); err != nil {
+		return err
+	}
+	if err := r.sendString(topic); err != nil {
+		return err
+	}
+	return r.sockBuf.Flush()
+}
+
+// Sends a topic event publish.
+func (r *relay) sendPublish(topic string, event []byte) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opPublish); err != nil {
+		return err
+	}
+	if err := r.sendString(topic); err != nil {
+		return err
+	}
+	if err := r.sendBinary(event); err != nil {
+		return err
+	}
+	return r.sockBuf.Flush()
+}
+
+// Sends a tunnel construction request.
+func (r *relay) sendTunnelRequest(id uint64, cluster string, timeout int) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opTunBuild); err != nil {
+		return err
+	}
+	if err := r.sendVarint(id); err != nil {
+		return err
+	}
+	if err := r.sendString(cluster); err != nil {
+		return err
+	}
+	if err := r.sendVarint(uint64(timeout)); err != nil {
+		return err
+	}
+	return r.sockBuf.Flush()
+}
+
+// Sends a tunnel confirmation.
+func (r *relay) sendTunnelConfirm(buildId, tunId uint64) error {
+	r.sockLock.Lock()
+	defer r.sockLock.Unlock()
+
+	if err := r.sendByte(opTunConfirm); err != nil {
+		return err
+	}
+	if err := r.sendVarint(buildId); err != nil {
 		return err
 	}
 	if err := r.sendVarint(tunId); err != nil {
 		return err
 	}
-	if err := r.sendString(app); err != nil {
-		return err
-	}
-	if err := r.sendVarint(uint64(buf)); err != nil {
-		return err
-	}
-	if err := r.sendVarint(uint64(time)); err != nil {
-		return err
-	}
-	return r.sendFlush()
+	return r.sockBuf.Flush()
 }
 
-// Atomically sends the acknowledgment for a tunneling request into the relay.
-func (r *relay) sendTunnelReply(tmpId, tunId uint64, buf int) error {
+// Sends a tunnel transfer allowance.
+func (r *relay) sendTunnelAllowance(id uint64, space uint64) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
 
-	if err := r.sendByte(opTunRep); err != nil {
+	if err := r.sendByte(opTunAllow); err != nil {
 		return err
 	}
-	if err := r.sendVarint(tmpId); err != nil {
+	if err := r.sendVarint(id); err != nil {
 		return err
 	}
-	if err := r.sendVarint(tunId); err != nil {
+	if err := r.sendVarint(space); err != nil {
 		return err
 	}
-	if err := r.sendVarint(uint64(buf)); err != nil {
-		return err
-	}
-	return r.sendFlush()
+	return r.sockBuf.Flush()
 }
 
-// Atomically sends a tunnel data message into the relay.
-func (r *relay) sendTunnelData(tunId uint64, msg []byte) error {
+// Sends a tunnel data exchange.
+func (r *relay) sendTunnelData(id uint64, size uint64, payload []byte) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
 
-	if err := r.sendByte(opTunData); err != nil {
+	if err := r.sendByte(opTunTransfer); err != nil {
 		return err
 	}
-	if err := r.sendVarint(tunId); err != nil {
+	if err := r.sendVarint(id); err != nil {
 		return err
 	}
-	if err := r.sendBinary(msg); err != nil {
+	if err := r.sendVarint(size); err != nil {
 		return err
 	}
-	return r.sendFlush()
+	if err := r.sendBinary(payload); err != nil {
+		return err
+	}
+	return r.sockBuf.Flush()
 }
 
-// Atomically sends a tunnel data acknowledgment into the relay.
-func (r *relay) sendTunnelAck(tunId uint64) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
-
-	if err := r.sendByte(opTunAck); err != nil {
-		return err
-	}
-	if err := r.sendVarint(tunId); err != nil {
-		return err
-	}
-	return r.sendFlush()
-}
-
-// Atomically sends a tunnel termination message into the relay.
-func (r *relay) sendTunnelClose(tunId uint64) error {
+// Sends a tunnel termination request.
+func (r *relay) sendTunnelClose(id uint64) error {
 	r.sockLock.Lock()
 	defer r.sockLock.Unlock()
 
 	if err := r.sendByte(opTunClose); err != nil {
 		return err
 	}
-	if err := r.sendVarint(tunId); err != nil {
+	if err := r.sendVarint(id); err != nil {
 		return err
 	}
-	return r.sendFlush()
+	return r.sockBuf.Flush()
 }
 
-// Retrieves a single byte from the relay.
+// Retrieves a single byte from the relay connection.
 func (r *relay) recvByte() (byte, error) {
-	b, err := r.sockBuf.ReadByte()
-	if err != nil {
-		return 0, permError(err)
-	}
-	return b, nil
+	return r.sockBuf.ReadByte()
 }
 
-// Retrieves a boolean from the relay.
+// Retrieves a boolean from the relay connection.
 func (r *relay) recvBool() (bool, error) {
 	b, err := r.recvByte()
 	if err != nil {
@@ -330,49 +327,42 @@ func (r *relay) recvBool() (bool, error) {
 	case 1:
 		return true, nil
 	default:
-		panic("protocol violation")
+		return false, fmt.Errorf("protocol violation: invalid boolean value: %v", b)
 	}
 }
 
-// Retrieves a variable int from the relay in base 128 encoding.
+// Retrieves a variable int from the relay in base 128 encoding from the relay connection.
 func (r *relay) recvVarint() (uint64, error) {
 	var num uint64
 	for i := uint(0); ; i++ {
-		// Retrieve the next byte of the varint
-		b, err := r.recvByte()
+		chunk, err := r.recvByte()
 		if err != nil {
 			return 0, err
 		}
-		// Save it and terminate if last byte
-		if b > 127 {
-			num += uint64(b-128) << (7 * i)
-		} else {
-			num += uint64(b) << (7 * i)
+		num += uint64(chunk&127) << (7 * i)
+		if chunk <= 127 {
 			break
 		}
 	}
 	return num, nil
 }
 
-// Retrieves a length-tagged binary array from the relay.
+// Retrieves a length-tagged binary array from the relay connection.
 func (r *relay) recvBinary() ([]byte, error) {
+	// Fetch the length of the binary blob
 	size, err := r.recvVarint()
 	if err != nil {
 		return nil, err
 	}
+	// Fetch the blob itself
 	data := make([]byte, size)
-	read := uint64(0)
-	for read < size {
-		if n, err := r.sockBuf.Read(data[read:]); err != nil {
-			return nil, err
-		} else {
-			read += uint64(n)
-		}
+	if _, err := io.ReadFull(r.sockBuf, data); err != nil {
+		return nil, err
 	}
 	return data, nil
 }
 
-// Retrieves a length-tagged string from the relay.
+// Retrieves a length-tagged string from the relay connection.
 func (r *relay) recvString() (string, error) {
 	if data, err := r.recvBinary(); err != nil {
 		return "", err
@@ -381,14 +371,14 @@ func (r *relay) recvString() (string, error) {
 	}
 }
 
-// Retrieves a connection initialization response.
+// Retrieves a connection initiation response (either accept or deny).
 func (r *relay) procInit() (string, error) {
-	// Retrieve the success flag
+	// Retrieve the response opcode
 	op, err := r.recvByte()
 	if err != nil {
 		return "", err
 	}
-	// Verify the relay magic string
+	// Verify the opcode validity and relay magic string
 	switch {
 	case op == opInit || op == opDeny:
 		if magic, err := r.recvString(); err != nil {
@@ -396,6 +386,8 @@ func (r *relay) procInit() (string, error) {
 		} else if magic != relayMagic {
 			return "", fmt.Errorf("protocol violation: invalid relay magic: %s", magic)
 		}
+	default:
+		return "", fmt.Errorf("protocol violation: invalid init response opcode: %v", op)
 	}
 	// Depending on success or failure, proceed and return
 	switch op {
@@ -407,44 +399,53 @@ func (r *relay) procInit() (string, error) {
 			return version, nil
 		}
 	case opDeny:
-		// Read the denial reason
+		// Read the reason for connection denial
 		if reason, err := r.recvString(); err != nil {
 			return "", err
 		} else {
 			return "", fmt.Errorf("connection denied: %s", reason)
 		}
 	default:
-		panic("Unreachable code")
+		panic("unreachable code")
 	}
 }
 
-// Retrieves a remote broadcast message from the relay and notifies the handler.
+// Retrieves a connection tear-down notification.
+func (r *relay) procClose() (string, error) {
+	return r.recvString()
+}
+
+// Retrieves a broadcast delivery.
 func (r *relay) procBroadcast() error {
-	msg, err := r.recvBinary()
+	message, err := r.recvBinary()
 	if err != nil {
 		return err
 	}
-	go r.handleBroadcast(msg)
+	go r.handleBroadcast(message)
 	return nil
 }
 
-// Retrieves a remote request from the relay.
+// Retrieves a request delivery.
 func (r *relay) procRequest() error {
-	reqId, err := r.recvVarint()
+	id, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	req, err := r.recvBinary()
+	request, err := r.recvBinary()
 	if err != nil {
 		return err
 	}
-	go r.handleRequest(reqId, req)
+	timeout, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	go r.handleRequest(id, request, timeout)
 	return nil
 }
 
-// Retrieves a remote reply to a local request from the relay.
+// Retrieves a reply delivery.
 func (r *relay) procReply() error {
-	reqId, err := r.recvVarint()
+	id, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
@@ -453,49 +454,61 @@ func (r *relay) procReply() error {
 		return err
 	}
 	if timeout {
-		go r.handleReply(reqId, nil)
-	} else {
-		// The request didn't time out, get the reply
-		rep, err := r.recvBinary()
+		go r.handleReply(id, nil, "")
+		return nil
+	}
+	// The request didn't time out, get the result
+	success, err := r.recvBool()
+	if err != nil {
+		return err
+	}
+	if success {
+		reply, err := r.recvBinary()
 		if err != nil {
 			return err
 		}
-		go r.handleReply(reqId, rep)
+		go r.handleReply(id, reply, "")
+	} else {
+		fault, err := r.recvString()
+		if err != nil {
+			return err
+		}
+		go r.handleReply(id, nil, fault)
 	}
 	return nil
 }
 
-// Retrieves a topic publish message from the relay.
+// Retrieves a topic event delivery.
 func (r *relay) procPublish() error {
 	topic, err := r.recvString()
 	if err != nil {
 		return err
 	}
-	msg, err := r.recvBinary()
+	event, err := r.recvBinary()
 	if err != nil {
 		return err
 	}
-	go r.handlePublish(topic, msg)
+	go r.handlePublish(topic, event)
 	return nil
 }
 
-// Retrieves a remote tunneling request from the relay.
+// Retrieves a tunnel initiation message.
 func (r *relay) procTunnelRequest() error {
-	tmpId, err := r.recvVarint()
+	id, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	buf, err := r.recvVarint()
+	chunk, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	go r.handleTunnelRequest(tmpId, int(buf))
+	go r.handleTunnelRequest(id, chunk)
 	return nil
 }
 
-// Retrieves the remote reply to a local tunneling request from the relay.
+// Retrieves a tunnel construction result.
 func (r *relay) procTunnelReply() error {
-	tunId, err := r.recvVarint()
+	id, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
@@ -504,49 +517,61 @@ func (r *relay) procTunnelReply() error {
 		return err
 	}
 	if timeout {
-		go r.handleTunnelReply(tunId, 0, true)
-	} else {
-		// The tunnel didn't time out, proceed
-		buf, err := r.recvVarint()
-		if err != nil {
-			return err
-		}
-		go r.handleTunnelReply(tunId, int(buf), false)
+		go r.handleTunnelReply(id, 0)
+		return nil
 	}
+	// The tunnel didn't time out, proceed
+	chunk, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	go r.handleTunnelReply(id, chunk)
 	return nil
 }
 
-// Retrieves a remote tunnel data message.
+// Retrieves a tunnel transfer allowance message.
+func (r *relay) procTunnelAllowance() error {
+	id, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	space, err := r.recvVarint()
+	if err != nil {
+		return err
+	}
+	go r.handleTunnelAllowance(id, space)
+	return nil
+}
+
+// Retrieves a tunnel data exchange message.
 func (r *relay) procTunnelData() error {
-	tunId, err := r.recvVarint()
+	id, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	msg, err := r.recvBinary()
+	size, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	r.handleTunnelData(tunId, msg) // Note, NOT separate go-routine!
+	payload, err := r.recvBinary()
+	if err != nil {
+		return err
+	}
+	r.handleTunnelData(id, size, payload) // Note, NOT separate go-routine!
 	return nil
 }
 
-// Retrieves a remote tunnel message acknowledgment.
-func (r *relay) procTunnelAck() error {
-	tunId, err := r.recvVarint()
-	if err != nil {
-		return err
-	}
-	go r.handleTunnelAck(tunId)
-	return nil
-}
-
-// Retrieves the remote closure of a tunnel.
+// Retrieves a tunnel closure notification.
 func (r *relay) procTunnelClose() error {
-	tunId, err := r.recvVarint()
+	id, err := r.recvVarint()
 	if err != nil {
 		return err
 	}
-	go r.handleTunnelClose(tunId)
+	reason, err := r.recvString()
+	if err != nil {
+		return err
+	}
+	go r.handleTunnelClose(id, reason)
 	return nil
 }
 
@@ -572,16 +597,22 @@ func (r *relay) process() {
 			case opTunRep:
 				err = r.procTunnelReply()
 			case opTunAck:
-				err = r.procTunnelAck()
+				err = r.procTunnelAllowance()
 			case opTunData:
 				err = r.procTunnelData()
 			case opTunClose:
 				err = r.procTunnelClose()
 			case opClose:
-				// Graceful close
-				closed = true
+				// Retrieve any reason for remote closure
+				if reason, cerr := r.procClose(); cerr != nil {
+					err = cerr
+				} else if len(reason) > 0 {
+					err = fmt.Errorf("connection dropped: %s", reason)
+				} else {
+					closed = true
+				}
 			default:
-				err = fmt.Errorf("unknown opcode: %v", op)
+				err = fmt.Errorf("protocol violation: unknown opcode: %v", op)
 			}
 		}
 	}
