@@ -9,6 +9,7 @@ package tests
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -28,7 +29,11 @@ func (r *requester) HandleBroadcast(msg []byte) {
 }
 
 func (r *requester) HandleRequest(req []byte) ([]byte, error) {
-	return req, nil
+	if bytes.Compare(req, []byte("fail")) != 0 {
+		return req, nil
+	} else {
+		return nil, errors.New("failed")
+	}
 }
 
 func (r *requester) HandleTunnel(tun iris.Tunnel) {
@@ -36,7 +41,7 @@ func (r *requester) HandleTunnel(tun iris.Tunnel) {
 }
 
 func (r *requester) HandleDrop(reason error) {
-	panic("Connection dropped on request handler")
+	panic("Connection dropped on request handler: " + reason.Error())
 }
 
 // Sends a few requests to one-self, waiting for the echo.
@@ -148,6 +153,34 @@ func TestReqRepMulti(t *testing.T) {
 	// Sync up the terminations
 	term.Done()
 	kill.Wait()
+}
+
+// Sends a few requests to one-self, expecting error replies.
+func TestReqRepFail(t *testing.T) {
+	// Configure the test
+	requests := 1000
+
+	// Connect to the Iris network
+	cluster := "test-reqrep-single"
+	conn, err := iris.Connect(relayPort, cluster, new(requester))
+	if err != nil {
+		t.Fatalf("connection failed: %v.", err)
+	}
+	defer conn.Close()
+
+	// Send a handful of requests, verifying the replies
+	for i := 0; i < requests; i++ {
+		req := []byte("fail")
+
+		// Send request, verify failure
+		rep, err := conn.Request(cluster, req, 250*time.Millisecond)
+		switch {
+		case err == nil:
+			t.Fatalf("request didn't fail: %v.", rep)
+		case err.Error() != "failed":
+			t.Fatalf("fault mismatch: have %v, want %v.", err, "failed")
+		}
+	}
 }
 
 // Benchmarks the pass-through of a single request-reply.

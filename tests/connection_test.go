@@ -17,8 +17,7 @@ import (
 // Tests a single startup and shutdown pair.
 func TestConnectSingle(t *testing.T) {
 	// Connect to the local relay
-	cluster := "test-connect-single"
-	if conn, err := iris.Connect(relayPort, cluster, nil); err != nil {
+	if conn, err := iris.Connect(relayPort, config.cluster, nil); err != nil {
 		t.Fatalf("connection failed: %v.", err)
 	} else {
 		// Disconnect from the local relay
@@ -60,8 +59,7 @@ func TestConnectParallel(t *testing.T) {
 		start.Add(1)
 		go func() {
 			// Connect to the local relay
-			cluster := "test-connect-parallel"
-			conn, err := iris.Connect(relayPort, cluster, nil)
+			conn, err := iris.Connect(relayPort, config.cluster, nil)
 			if err != nil {
 				errs <- fmt.Errorf("connection failed: %v", err)
 				start.Done()
@@ -90,8 +88,7 @@ func TestConnectParallel(t *testing.T) {
 // Benchmarks connection setup
 func BenchmarkConnect(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cluster := fmt.Sprintf("bench-connect-%d", i)
-		if conn, err := iris.Connect(relayPort, cluster, nil); err != nil {
+		if conn, err := iris.Connect(relayPort, config.cluster, nil); err != nil {
 			b.Fatalf("iteration %d: connection failed: %v.", i, err)
 		} else {
 			defer conn.Close()

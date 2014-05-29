@@ -11,7 +11,7 @@
 package iris
 
 import (
-	"fmt"
+	"errors"
 	"log"
 )
 
@@ -24,6 +24,9 @@ func (c *connection) handleBroadcast(message []byte) {
 // the response or the encountered error.
 func (c *connection) handleRequest(id uint64, request []byte, timeout int) {
 	reply, fault := c.handler.HandleRequest(request)
+	if fault == nil {
+		fault = errors.New("")
+	}
 	if err := c.sendReply(id, reply, fault.Error()); err != nil {
 		log.Printf("iris: failed to send reply: %v.", err)
 	}
@@ -37,7 +40,7 @@ func (c *connection) handleReply(id uint64, reply []byte, fault string) {
 	if reply == nil && len(fault) == 0 {
 		c.reqErrs[id] <- ErrTimeout
 	} else if reply == nil {
-		c.reqErrs[id] <- fmt.Errorf("remote error: %s", fault)
+		c.reqErrs[id] <- errors.New(fault)
 	} else {
 		c.reqReps[id] <- reply
 	}

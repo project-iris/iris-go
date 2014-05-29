@@ -58,6 +58,7 @@ func newConnection(port int, cluster string, handler ConnectionHandler) (Connect
 	conn := &connection{
 		// Application layer
 		handler: handler,
+
 		reqReps: make(map[uint64]chan []byte),
 		reqErrs: make(map[uint64]chan error),
 		subLive: make(map[string]SubscriptionHandler),

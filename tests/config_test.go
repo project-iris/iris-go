@@ -8,3 +8,9 @@ package tests
 
 // Hard coded port for the local Iris node relay endpoint
 var relayPort = 55555
+
+var config = struct {
+	cluster string
+}{
+	cluster: "go-binding-test-cluster",
+}

@@ -165,7 +165,11 @@ func (c *connection) sendReply(id uint64, reply []byte, fault string) error {
 	if err := c.sendVarint(id); err != nil {
 		return err
 	}
-	if len(fault) == 0 {
+	success := (len(fault) == 0)
+	if err := c.sendBool(success); err != nil {
+		return err
+	}
+	if success {
 		if err := c.sendBinary(reply); err != nil {
 			return err
 		}
@@ -419,7 +423,7 @@ func (c *connection) procClose() (string, error) {
 	return c.recvString()
 }
 
-// Retrieves a broadcast delivery.
+// Retrieves an application broadcast delivery.
 func (c *connection) procBroadcast() error {
 	message, err := c.recvBinary()
 	if err != nil {
@@ -429,7 +433,7 @@ func (c *connection) procBroadcast() error {
 	return nil
 }
 
-// Retrieves a request delivery.
+// Retrieves an application request delivery.
 func (c *connection) procRequest() error {
 	id, err := c.recvVarint()
 	if err != nil {
@@ -447,7 +451,7 @@ func (c *connection) procRequest() error {
 	return nil
 }
 
-// Retrieves a reply delivery.
+// Retrieves an application reply delivery.
 func (c *connection) procReply() error {
 	id, err := c.recvVarint()
 	if err != nil {
