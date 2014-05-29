@@ -8,6 +8,7 @@ package iris
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -15,13 +16,14 @@ import (
 )
 
 // Message relay between the local app and the local iris node.
-type relay struct {
+type connection struct {
 	// Application layer fields
 	handler ConnectionHandler // Handler for connection events
 
 	reqIdx  uint64                 // Index to assign the next request
-	reqPend map[uint64]chan []byte // Active requests waiting for a reply
-	reqLock sync.RWMutex           // Mutex to protect the request map
+	reqReps map[uint64]chan []byte // Reply channels for active requests
+	reqErrs map[uint64]chan error  // Error channels for active requests
+	reqLock sync.RWMutex           // Mutex to protect the result channel maps
 
 	subLive map[string]SubscriptionHandler // Active subscriptions
 	subLock sync.RWMutex                   // Mutex to protect the subscription map
@@ -41,8 +43,8 @@ type relay struct {
 	term chan struct{}   // Channel to signal termination to blocked go-routines
 }
 
-// Connects to a local relay endpoint on port and logs in with id app.
-func newRelay(port int, app string, handler ConnectionHandler) (Connection, error) {
+// Connects to a local relay endpoint on port and registers as cluster.
+func newConnection(port int, cluster string, handler ConnectionHandler) (Connection, error) {
 	// Connect to the iris relay node
 	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
@@ -53,10 +55,11 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 		return nil, err
 	}
 	// Create the relay object
-	rel := &relay{
+	conn := &connection{
 		// Application layer
 		handler: handler,
-		reqPend: make(map[uint64]chan []byte),
+		reqReps: make(map[uint64]chan []byte),
+		reqErrs: make(map[uint64]chan error),
 		subLive: make(map[string]SubscriptionHandler),
 		tunLive: make(map[uint64]*tunnel),
 
@@ -69,153 +72,163 @@ func newRelay(port int, app string, handler ConnectionHandler) (Connection, erro
 		term: make(chan struct{}),
 	}
 	// Initialize the connection and wait for a confirmation
-	if err := rel.sendInit(app); err != nil {
+	if err := conn.sendInit(cluster); err != nil {
 		return nil, err
 	}
-	if _, err := rel.procInit(); err != nil {
+	if _, err := conn.procInit(); err != nil {
 		return nil, err
 	}
 	// All ok, start processing messages and return
-	go rel.process()
-	return rel, nil
+	go conn.process()
+	return conn, nil
 }
 
 // Implements iris.Connection.Broadcast.
-func (r *relay) Broadcast(app string, msg []byte) error {
+func (c *connection) Broadcast(cluster string, message []byte) error {
 	// Sanity check on the arguments
-	if len(app) == 0 {
-		panic("iris: empty application identifier")
+	if len(cluster) == 0 {
+		return errors.New("empty cluster identifier")
 	}
-	if msg == nil {
-		panic("iris: nil message")
+	if message == nil {
+		return errors.New("nil message")
 	}
 	// Broadcast and return
-	return r.sendBroadcast(app, msg)
+	return c.sendBroadcast(cluster, message)
 }
 
 // Implements iris.Connection.Request.
-func (r *relay) Request(app string, req []byte, timeout time.Duration) ([]byte, error) {
+func (c *connection) Request(cluster string, request []byte, timeout time.Duration) ([]byte, error) {
 	// Sanity check on the arguments
-	if len(app) == 0 {
-		panic("iris: empty application identifier")
+	if len(cluster) == 0 {
+		return nil, errors.New("empty cluster identifier")
 	}
-	if req == nil {
-		panic("iris: nil request")
+	if request == nil {
+		return nil, errors.New("nil request")
 	}
 	timeoutms := int(timeout.Nanoseconds() / 1000000)
 	if timeoutms < 1 {
-		panic(fmt.Sprintf("iris: invalid timeout %d < 1ms", timeoutms))
+		return nil, fmt.Errorf("invalid timeout %v < 1ms", timeout)
 	}
-	// Create a reply channel for the results
-	r.reqLock.Lock()
-	reqCh := make(chan []byte, 1)
-	reqId := r.reqIdx
-	r.reqIdx++
-	r.reqPend[reqId] = reqCh
-	r.reqLock.Unlock()
+	// Create a reply and error channel for the results
+	repc := make(chan []byte, 1)
+	errc := make(chan error, 1)
 
-	// Make sure reply channel is cleaned up
+	c.reqLock.Lock()
+	reqId := c.reqIdx
+	c.reqIdx++
+	c.reqReps[reqId] = repc
+	c.reqErrs[reqId] = errc
+	c.reqLock.Unlock()
+
+	// Make sure the result channels are cleaned up
 	defer func() {
-		r.reqLock.Lock()
-		defer r.reqLock.Unlock()
-
-		delete(r.reqPend, reqId)
-		close(reqCh)
+		c.reqLock.Lock()
+		delete(c.reqReps, reqId)
+		delete(c.reqErrs, reqId)
+		close(repc)
+		close(errc)
+		c.reqLock.Unlock()
 	}()
 	// Send the request
-	if err := r.sendRequest(reqId, app, req, timeoutms); err != nil {
+	if err := c.sendRequest(reqId, cluster, request, timeoutms); err != nil {
 		return nil, err
 	}
 	// Retrieve the results or fail if terminating
 	select {
-	case <-r.term:
-		return nil, permError(fmt.Errorf("relay terminating"))
-	case rep := <-reqCh:
-		if rep != nil {
-			return rep, nil
-		} else {
-			return nil, timeError(fmt.Errorf("request timed out"))
-		}
+	case <-c.term:
+		return nil, ErrClosing
+	case reply := <-repc:
+		return reply, nil
+	case err := <-errc:
+		return nil, err
 	}
 }
 
 // Implements iris.Connection.Subscribe.
-func (r *relay) Subscribe(topic string, handler SubscriptionHandler) error {
+func (c *connection) Subscribe(topic string, handler SubscriptionHandler) error {
 	// Sanity check on the arguments
 	if len(topic) == 0 {
-		panic("iris: empty topic identifier")
+		return errors.New("empty topic identifier")
 	}
 	if handler == nil {
-		panic("iris: nil subscription handler")
+		return errors.New("nil subscription handler")
 	}
-	// Subscribe locally or panic
-	r.subLock.Lock()
-	if _, ok := r.subLive[topic]; ok {
-		r.subLock.Unlock()
-		panic("iris: already subscribed")
+	// Subscribe locally
+	c.subLock.Lock()
+	if _, ok := c.subLive[topic]; ok {
+		c.subLock.Unlock()
+		return errors.New("already subscribed")
 	}
-	r.subLive[topic] = handler
-	r.subLock.Unlock()
+	c.subLive[topic] = handler
+	c.subLock.Unlock()
 
-	// Subscribe through the relay
-	err := r.sendSubscribe(topic)
+	// Send the subscription request
+	err := c.sendSubscribe(topic)
 	if err != nil {
-		r.subLock.Lock()
-		if _, ok := r.subLive[topic]; ok {
-			delete(r.subLive, topic)
+		c.subLock.Lock()
+		if _, ok := c.subLive[topic]; ok {
+			delete(c.subLive, topic)
 		}
-		r.subLock.Unlock()
+		c.subLock.Unlock()
 	}
 	return err
 }
 
 // Implements iris.Connection.Publish.
-func (r *relay) Publish(topic string, msg []byte) error {
+func (c *connection) Publish(topic string, event []byte) error {
 	// Sanity check on the arguments
 	if len(topic) == 0 {
-		panic("iris: empty topic identifier")
+		return errors.New("empty topic identifier")
 	}
-	if msg == nil {
-		panic("iris: nil message")
+	if event == nil {
+		return errors.New("nil event")
 	}
 	// Publish and return
-	return r.sendPublish(topic, msg)
+	return c.sendPublish(topic, event)
 }
 
 // Implements iris.Connection.Unsubscribe.
-func (r *relay) Unsubscribe(topic string) error {
+func (c *connection) Unsubscribe(topic string) error {
 	// Sanity check on the arguments
 	if len(topic) == 0 {
-		panic("iris: empty topic identifier")
+		return errors.New("empty topic identifier")
 	}
 	// Unsubscribe through the relay and remove if successful
-	err := r.sendUnsubscribe(topic)
+	err := c.sendUnsubscribe(topic)
 	if err == nil {
-		r.subLock.Lock()
-		defer r.subLock.Unlock()
+		c.subLock.Lock()
+		defer c.subLock.Unlock()
 
-		if _, ok := r.subLive[topic]; !ok {
-			panic("iris: not subscribed")
+		if _, ok := c.subLive[topic]; !ok {
+			return errors.New("not subscribed")
 		}
-		delete(r.subLive, topic)
+		delete(c.subLive, topic)
 	}
 	return err
 }
 
 // Implements iris.Connection.Tunnel.
-func (r *relay) Tunnel(app string, timeout time.Duration) (Tunnel, error) {
+func (c *connection) Tunnel(cluster string, timeout time.Duration) (Tunnel, error) {
+	// Sanity check on the arguments
+	if len(cluster) == 0 {
+		return nil, errors.New("empty cluster identifier")
+	}
+	timeoutms := int(timeout.Nanoseconds() / 1000000)
+	if timeoutms < 1 {
+		return nil, fmt.Errorf("invalid timeout %v < 1ms", timeout)
+	}
 	// Simple call indirection to move into the tunnel source file
-	return r.initiateTunnel(app, int(timeout.Nanoseconds()/1000000))
+	return c.initTunnel(cluster, timeoutms)
 }
 
 // Implements iris.Connection.Close.
-func (r *relay) Close() error {
+func (c *connection) Close() error {
 	// Send a graceful close to the relay node
-	if err := r.sendClose(); err != nil {
+	if err := c.sendClose(); err != nil {
 		return err
 	}
 	// Wait till the close syncs and return
 	errc := make(chan error, 1)
-	r.quit <- errc
+	c.quit <- errc
 	return <-errc
 }

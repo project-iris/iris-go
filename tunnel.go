@@ -7,219 +7,292 @@
 package iris
 
 import (
+	"errors"
 	"fmt"
+	"log"
+	"sync"
 	"time"
+
+	"github.com/project-iris/iris/container/queue"
 )
 
 // Iris to app buffer size for flow control.
-var tunnelBuffer = 128
+var tunnelBuffer = 2 * 1024 * 1024 // 2MB
 
 // Ordered message stream between two endpoints.
 type tunnel struct {
-	id  uint64 // Tunnel identifier for traffic relay
-	rel *relay // Message relay to the iris node
+	id   uint64      // Tunnel identifier for de/multiplexing
+	conn *connection // Connection to the local relay
 
-	// Throttling fields
-	itoa chan []byte   // Iris to application message buffer
-	atoi chan struct{} // Application to Iris pending ack buffer
+	// Chunking fields
+	chunkLimit int    // Maximum length of a data payload
+	chunkBuf   []byte // Current message being assembled
+
+	// Quality of service fields
+	itoaBuf  *queue.Queue  // Iris to application message buffer
+	itoaSign chan struct{} // Message arrival signaler
+	itoaLock *sync.Mutex   // Protects the buffer and signaler
+
+	atoiSpace int           // Application to Iris space allowance
+	atoiSign  chan struct{} // Allowance grant signaler
+	atoiLock  *sync.Mutex   // Protects the allowance and signaler
 
 	// Bookkeeping fields
 	init chan bool     // Initialization channel for outbound tunnels
 	term chan struct{} // Channel to signal termination to blocked go-routines
+	stat error         // Failure reason, if any received
 }
 
-// Implements iris.Tunnel.Send.
-func (t *tunnel) Send(msg []byte, timeout time.Duration) error {
-	// Sanity check on the arguments
-	if msg == nil {
-		panic("iris: nil message")
-	}
-	if timeout != 0 {
-		timeoutms := int(timeout.Nanoseconds() / 1000000)
-		if timeoutms < 1 {
-			panic(fmt.Sprintf("iris: invalid timeout %d < 1ms", timeoutms))
-		}
-	}
-	// Create (the possibly nil) timeout signaler
-	var after <-chan time.Time
-	if timeout != 0 {
-		after = time.After(timeout)
-	}
-	// Query for a send allowance
-	select {
-	case <-t.term:
-		return permError(fmt.Errorf("tunnel closed"))
-	case <-after:
-		return timeError(fmt.Errorf("send timeout"))
-	case t.atoi <- struct{}{}:
-		return t.rel.sendTunnelData(t.id, msg)
-	}
-}
+func (c *connection) newTunnel() (*tunnel, error) {
+	c.tunLock.Lock()
+	defer c.tunLock.Unlock()
 
-// Implements iris.Tunnel.Recv.
-func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
-	// Sanity check on the arguments
-	if timeout != 0 {
-		timeoutms := int(timeout.Nanoseconds() / 1000000)
-		if timeoutms < 1 {
-			panic(fmt.Sprintf("iris: invalid timeout %d < 1ms", timeoutms))
-		}
+	// Make sure the connection is still up
+	if c.tunLive == nil {
+		return nil, ErrClosed
 	}
-	// Create the timeout signaler
-	var after <-chan time.Time
-	if timeout != 0 {
-		after = time.After(time.Duration(timeout) * time.Millisecond)
-	}
-	// Retrieve the next message
-	select {
-	case <-t.term:
-		return nil, permError(fmt.Errorf("tunnel closed"))
-	case <-after:
-		return nil, timeError(fmt.Errorf("recv timeout"))
-	case msg := <-t.itoa:
-		// Message arrived, ack and return
-		go func() {
-			if err := t.rel.sendTunnelAck(t.id); err != nil {
-				// Common race (during closing), valid, left in for debugging purposes
-				//log.Printf("iris: tunnel ack failed: %v.", err)
-			}
-		}()
-		return msg, nil
-	}
-}
+	// Assign a new locally unique id to the tunnel
+	tunId := c.tunIdx
+	c.tunIdx++
 
-// Implements iris.Tunnel.Close.
-func (t *tunnel) Close() error {
-	// Signal the relay and wait for closure (either remote confirm or local fail)
-	err := t.rel.sendTunnelClose(t.id)
-	<-t.term
-	return err
-}
-
-// Initiates a new tunnel to a remote app. Timeouts are handled framework side!
-func (r *relay) initiateTunnel(app string, timeout int) (Tunnel, error) {
-	// Sanity check on the arguments
-	if len(app) == 0 {
-		panic("iris: empty application identifier")
-	}
-	if timeout <= 0 {
-		panic(fmt.Sprintf("iris: invalid timeout %d <= 0", timeout))
-	}
-	// Create a potential tunnel
-	r.tunLock.Lock()
-	if r.tunLive == nil {
-		r.tunLock.Unlock()
-		return nil, permError(fmt.Errorf("connection closed"))
-	}
-	tunId := r.tunIdx
+	// Assemble and store the live tunnel
 	tun := &tunnel{
-		id:  tunId,
-		rel: r,
+		id:   tunId,
+		conn: c,
 
-		itoa: make(chan []byte, tunnelBuffer),
+		itoaBuf:  queue.New(),
+		itoaSign: make(chan struct{}, 1),
+		atoiSign: make(chan struct{}, 1),
+
 		init: make(chan bool),
 		term: make(chan struct{}),
 	}
-	r.tunIdx++
-	r.tunLive[tunId] = tun
-	r.tunLock.Unlock()
+	c.tunLive[tunId] = tun
 
-	// Send the tunneling request and clean up in case of a failure
-	if err := r.sendTunnelRequest(tunId, app, tunnelBuffer, timeout); err != nil {
-		r.tunLock.Lock()
-		delete(r.tunLive, tunId)
-		r.tunLock.Unlock()
-		return nil, err
-	}
-	// Wait for tunneling completion or a timeout
-	select {
-	case init := <-tun.init:
-		if init {
-			return tun, nil
-		} else {
-			// Tunneling timed out, clean up
-			r.tunLock.Lock()
-			delete(r.tunLive, tunId)
-			r.tunLock.Unlock()
-
-			// Report timeout failure
-			return nil, timeError(fmt.Errorf("tunneling timed out"))
-		}
-	case <-r.term:
-		// Relay terminating, clean up
-		r.tunLock.Lock()
-		delete(r.tunLive, tunId)
-		r.tunLock.Unlock()
-
-		// Error out with a temporary failure
-		return nil, permError(fmt.Errorf("relay terminating"))
-	}
+	return tun, nil
 }
 
-// Accepts an incoming tunneling request from a remote app, assembling a local
-// tunnel with the given send window and replies to the relay with the final
-// permanent tunnel id.
-func (r *relay) acceptTunnel(tmpId uint64, buf int) (Tunnel, error) {
-	// Create the local tunnel endpoint
-	r.tunLock.Lock()
-	tunId := r.tunIdx
-	tun := &tunnel{
-		id:   tunId,
-		rel:  r,
-		itoa: make(chan []byte, tunnelBuffer),
-		atoi: make(chan struct{}, buf),
-		term: make(chan struct{}),
+// Initiates a new tunnel to a remote cluster.
+func (c *connection) initTunnel(cluster string, timeout int) (Tunnel, error) {
+	// Create a potential tunnel
+	tun, err := c.newTunnel()
+	if err != nil {
+		return nil, err
 	}
-	r.tunIdx++
-	r.tunLive[tunId] = tun
-	r.tunLock.Unlock()
+	// Try and construct the tunnel
+	err = c.sendTunnelInit(tun.id, cluster, timeout)
+	if err == nil {
+		// Wait for tunneling completion or a timeout
+		select {
+		case init := <-tun.init:
+			if init {
+				return tun, nil
+			}
+			err = ErrTimeout
+		case <-c.term:
+			err = ErrClosing
+		}
+	}
+	// Clean up and return the failure
+	c.tunLock.Lock()
+	delete(c.tunLive, tun.id)
+	c.tunLock.Unlock()
 
-	// Acknowledge the tunnel creation to the relay
-	if err := r.sendTunnelReply(tmpId, tunId, tunnelBuffer); err != nil {
-		r.tunLock.Lock()
-		delete(r.tunLive, tunId)
-		r.tunLock.Unlock()
+	return nil, err
+}
+
+// Accepts an incoming tunneling request and confirms its local id.
+func (c *connection) acceptTunnel(initId uint64, chunkLimit int) (Tunnel, error) {
+	// Create the local tunnel endpoint
+	tun, err := c.newTunnel()
+	if err != nil {
+		return nil, err
+	}
+	tun.chunkLimit = chunkLimit
+
+	// Confirm the tunnel creation to the relay node
+	if err := c.sendTunnelConfirm(initId, tun.id); err != nil {
+		c.tunLock.Lock()
+		delete(c.tunLive, tun.id)
+		c.tunLock.Unlock()
 		return nil, err
 	}
 	// Return the accepted tunnel
 	return tun, nil
 }
 
-// Finalizes the tunneling initiation by setting the output buffer or signaling
-// a timeout.
-func (t *tunnel) handleInit(buf int, timeout bool) {
-	if !timeout {
-		t.atoi = make(chan struct{}, buf)
+// Implements iris.Tunnel.Send.
+func (t *tunnel) Send(message []byte, timeout time.Duration) error {
+	// Sanity check on the arguments
+	if message == nil {
+		return errors.New("nil message")
 	}
-	t.init <- !timeout
+	// Create timeout signaler
+	var deadline <-chan time.Time
+	if timeout != 0 {
+		deadline = time.After(timeout)
+	}
+	// Split the original message into bounded chunks
+	for pos := 0; pos < len(message); pos += t.chunkLimit {
+		end := pos + t.chunkLimit
+		if end > len(message) {
+			end = len(message)
+		}
+		if err := t.sendChunk(message[pos:end], pos == 0, deadline); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// Acknowledges one message as sent and allows further transfers.
-func (t *tunnel) handleAck() {
-	select {
-	case <-t.atoi:
-		// All ok
-	default:
-		panic("protocol violation")
+// Sends a single message chunk to the remote endpoint.
+func (t *tunnel) sendChunk(chunk []byte, first bool, deadline <-chan time.Time) error {
+	for {
+		// Short circuit if there's enough space allowance already
+		if t.drainAllowance(len(chunk)) {
+			return t.conn.sendTunnelTransfer(t.id, first, chunk)
+		}
+		// Query for a send allowance
+		select {
+		case <-t.term:
+			return ErrClosing
+		case <-deadline:
+			return ErrTimeout
+		case <-t.atoiSign:
+			// Potentially enough space allowance, retry
+			continue
+		}
 	}
 }
 
-// Places the received data into the local queue for delivery.
-func (t *tunnel) handleData(msg []byte) {
+// Checks whether there is enough space allowance available to send a message.
+// If yes, the allowance is reduced accordingly.
+func (t *tunnel) drainAllowance(need int) bool {
+	t.atoiLock.Lock()
+	defer t.atoiLock.Unlock()
+
+	if t.atoiSpace >= need {
+		t.atoiSpace -= need
+		return true
+	}
+	// Not enough, reset allowance grant flag
 	select {
-	case t.itoa <- msg:
-		// All ok
+	case <-t.atoiSign:
 	default:
-		panic("protocol violation")
+	}
+	return false
+}
+
+// Implements iris.Tunnel.Recv.
+func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
+	// Short circuit if there's a message already buffered
+	if msg := t.fetchMessage(); msg != nil {
+		return msg, nil
+	}
+	// Create the timeout signaler
+	var after <-chan time.Time
+	if timeout != 0 {
+		after = time.After(time.Duration(timeout) * time.Millisecond)
+	}
+	// Wait for a message to arrive
+	select {
+	case <-t.term:
+		return nil, ErrClosing
+	case <-after:
+		return nil, ErrTimeout
+	case <-t.itoaSign:
+		if msg := t.fetchMessage(); msg != nil {
+			return msg, nil
+		}
+		panic("signal raised but message unavailable")
+	}
+}
+
+// Fetches the next buffered message, or nil if none is available. If a message
+// was available, grants the remote side the space allowance just consumed.
+func (t *tunnel) fetchMessage() []byte {
+	t.itoaLock.Lock()
+	defer t.itoaLock.Unlock()
+
+	if !t.itoaBuf.Empty() {
+		message := t.itoaBuf.Pop().([]byte)
+		go t.conn.sendTunnelAllowance(t.id, len(message))
+		return message
+	}
+	// No message, reset arrival flag
+	select {
+	case <-t.itoaSign:
+	default:
+	}
+	return nil
+}
+
+// Implements iris.Tunnel.Close.
+func (t *tunnel) Close() error {
+	// Short circuit if remote end already closed
+	select {
+	case <-t.term:
+		return t.stat
+	default:
+	}
+	// Signal the relay and wait for closure
+	if err := t.conn.sendTunnelClose(t.id); err != nil {
+		return err
+	}
+	<-t.term
+	return t.stat
+}
+
+// Finalizes the tunnel construction.
+func (t *tunnel) handleInitResult(chunkLimit int) {
+	if chunkLimit > 0 {
+		t.chunkLimit = chunkLimit
+	}
+	t.init <- (chunkLimit > 0)
+}
+
+// Increases the available data allowance of the remote endpoint.
+func (t *tunnel) handleAllowance(space int) {
+	t.atoiLock.Lock()
+	defer t.atoiLock.Unlock()
+
+	t.atoiSpace += space
+	select {
+	case t.atoiSign <- struct{}{}:
+	default:
+	}
+}
+
+// Adds the chunk to the currently building message and delivers it upon
+// completion. If a new message starts, the old is discarded.
+func (t *tunnel) handleTransfer(size int, chunk []byte) {
+	// If a new message is arriving, dump anything stored before
+	if size != 0 {
+		if t.chunkBuf != nil {
+			log.Printf("Discarding incomplete tunnel message (%d bytes).", len(t.chunkBuf))
+		}
+		t.chunkBuf = make([]byte, size)
+	}
+	// Append the new chunk and check completion
+	t.chunkBuf = append(t.chunkBuf, chunk...)
+	if len(t.chunkBuf) == cap(t.chunkBuf) {
+		t.itoaLock.Lock()
+		defer t.itoaLock.Unlock()
+
+		t.itoaBuf.Push(t.chunkBuf)
+		t.chunkBuf = nil
+
+		select {
+		case t.itoaSign <- struct{}{}:
+		default:
+		}
 	}
 }
 
 // Handles the graceful remote closure of the tunnel.
-func (t *tunnel) handleClose() {
-	// Nil out the buffers to block send and receive ops
-	t.itoa = nil
-	t.atoi = nil
-
-	// Signal termination
+func (t *tunnel) handleClose(reason string) {
+	if reason != "" {
+		t.stat = fmt.Errorf("remote error: %s", reason)
+	}
 	close(t.term)
 }

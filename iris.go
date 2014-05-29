@@ -8,8 +8,13 @@
 package iris
 
 import (
+	"errors"
 	"time"
 )
+
+var ErrTimeout = errors.New("operation timed out")
+var ErrClosing = errors.New("connection closing")
+var ErrClosed = errors.New("connection closed")
 
 // Returns the relay protocol version implemented. Connecting to an Iris node
 // will fail unless the versions match exactly.
@@ -20,7 +25,7 @@ func Version() string {
 // Connects to the iris message relay running locally, registering with the id
 // app and using handler as the inbound application event handler.
 func Connect(port int, app string, handler ConnectionHandler) (Connection, error) {
-	return newRelay(port, app, handler)
+	return newConnection(port, app, handler)
 }
 
 // Link to the Iris node. All communication must pass through one of these.
@@ -123,7 +128,7 @@ type ConnectionHandler interface {
 	// Handles a request (msg), returning the reply that should be forwarded back
 	// to the caller. If the method crashes, nothing is returned and the caller
 	// will eventually time out.
-	HandleRequest(msg []byte) []byte
+	HandleRequest(msg []byte) ([]byte, error)
 
 	// Handles the request to open a direct tunnel.
 	HandleTunnel(tun Tunnel)

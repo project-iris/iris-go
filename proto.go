@@ -30,7 +30,7 @@ const (
 	opUnsubscribe = 0x07 // Out: topic subscription removal     | In: <never received>
 	opPublish     = 0x08 // Out: topic event publish            | In: topic event delivery
 
-	opTunBuild    = 0x09 // Out: tunnel construction request    | In: tunnel initiation
+	opTunInit     = 0x09 // Out: tunnel construction request    | In: tunnel initiation
 	opTunConfirm  = 0x0a // Out: tunnel confirmation            | In: tunnel construction result
 	opTunAllow    = 0x0b // Out: tunnel transfer allowance      | In: <same as out>
 	opTunTransfer = 0x0c // Out: tunnel data exchange           | In: <same as out>
@@ -45,279 +45,283 @@ var (
 )
 
 // Serializes a single byte into the relay connection.
-func (r *relay) sendByte(data byte) error {
-	return r.sockBuf.WriteByte(data)
+func (c *connection) sendByte(data byte) error {
+	return c.sockBuf.WriteByte(data)
 }
 
 // Serializes a boolean into the relay connection.
-func (r *relay) sendBool(data bool) error {
+func (c *connection) sendBool(data bool) error {
 	if data {
-		return r.sendByte(1)
+		return c.sendByte(1)
 	}
-	return r.sendByte(0)
+	return c.sendByte(0)
 }
 
 // Serializes a variable int into the relay using base 128 encoding into the relay connection.
-func (r *relay) sendVarint(data uint64) error {
+func (c *connection) sendVarint(data uint64) error {
 	for data > 127 {
 		// Internal byte, set the continuation flag and send
-		if err := r.sendByte(byte(128 + data%128)); err != nil {
+		if err := c.sendByte(byte(128 + data%128)); err != nil {
 			return err
 		}
 		data /= 128
 	}
 	// Final byte, send and return
-	return r.sendByte(byte(data))
+	return c.sendByte(byte(data))
 }
 
 // Serializes a length-tagged binary array into the relay connection.
-func (r *relay) sendBinary(data []byte) error {
-	if err := r.sendVarint(uint64(len(data))); err != nil {
+func (c *connection) sendBinary(data []byte) error {
+	if err := c.sendVarint(uint64(len(data))); err != nil {
 		return err
 	}
-	if _, err := r.sockBuf.Write([]byte(data)); err != nil {
+	if _, err := c.sockBuf.Write([]byte(data)); err != nil {
 		return err
 	}
 	return nil
 }
 
 // Serializes a length-tagged string into the relay connection.
-func (r *relay) sendString(data string) error {
-	return r.sendBinary([]byte(data))
+func (c *connection) sendString(data string) error {
+	return c.sendBinary([]byte(data))
 }
 
 // Sends a connection initiation.
-func (r *relay) sendInit(cluster string) error {
-	if err := r.sendByte(opInit); err != nil {
+func (c *connection) sendInit(cluster string) error {
+	if err := c.sendByte(opInit); err != nil {
 		return err
 	}
-	if err := r.sendString(clientMagic); err != nil {
+	if err := c.sendString(clientMagic); err != nil {
 		return err
 	}
-	if err := r.sendString(protoVersion); err != nil {
+	if err := c.sendString(protoVersion); err != nil {
 		return err
 	}
-	if err := r.sendString(cluster); err != nil {
+	if err := c.sendString(cluster); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a connection tear-down initiation.
-func (r *relay) sendClose() error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendClose() error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opClose); err != nil {
+	if err := c.sendByte(opClose); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends an application broadcast initiation.
-func (r *relay) sendBroadcast(cluster string, message []byte) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendBroadcast(cluster string, message []byte) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opBroadcast); err != nil {
+	if err := c.sendByte(opBroadcast); err != nil {
 		return err
 	}
-	if err := r.sendString(cluster); err != nil {
+	if err := c.sendString(cluster); err != nil {
 		return err
 	}
-	if err := r.sendBinary(message); err != nil {
+	if err := c.sendBinary(message); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends an application request initiation.
-func (r *relay) sendRequest(id uint64, cluster string, request []byte, timeout int) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendRequest(id uint64, cluster string, request []byte, timeout int) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opRequest); err != nil {
+	if err := c.sendByte(opRequest); err != nil {
 		return err
 	}
-	if err := r.sendVarint(id); err != nil {
+	if err := c.sendVarint(id); err != nil {
 		return err
 	}
-	if err := r.sendString(cluster); err != nil {
+	if err := c.sendString(cluster); err != nil {
 		return err
 	}
-	if err := r.sendBinary(request); err != nil {
+	if err := c.sendBinary(request); err != nil {
 		return err
 	}
-	if err := r.sendVarint(uint64(timeout)); err != nil {
+	if err := c.sendVarint(uint64(timeout)); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends an application reply initiation.
-func (r *relay) sendReply(id uint64, reply []byte, fault string) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendReply(id uint64, reply []byte, fault string) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opReply); err != nil {
+	if err := c.sendByte(opReply); err != nil {
 		return err
 	}
-	if err := r.sendVarint(id); err != nil {
+	if err := c.sendVarint(id); err != nil {
 		return err
 	}
 	if len(fault) == 0 {
-		if err := r.sendBinary(reply); err != nil {
+		if err := c.sendBinary(reply); err != nil {
 			return err
 		}
 	} else {
-		if err := r.sendString(fault); err != nil {
+		if err := c.sendString(fault); err != nil {
 			return err
 		}
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a topic subscription.
-func (r *relay) sendSubscribe(topic string) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendSubscribe(topic string) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opSubscribe); err != nil {
+	if err := c.sendByte(opSubscribe); err != nil {
 		return err
 	}
-	if err := r.sendString(topic); err != nil {
+	if err := c.sendString(topic); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a topic subscription removal.
-func (r *relay) sendUnsubscribe(topic string) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendUnsubscribe(topic string) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opUnsubscribe); err != nil {
+	if err := c.sendByte(opUnsubscribe); err != nil {
 		return err
 	}
-	if err := r.sendString(topic); err != nil {
+	if err := c.sendString(topic); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a topic event publish.
-func (r *relay) sendPublish(topic string, event []byte) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendPublish(topic string, event []byte) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opPublish); err != nil {
+	if err := c.sendByte(opPublish); err != nil {
 		return err
 	}
-	if err := r.sendString(topic); err != nil {
+	if err := c.sendString(topic); err != nil {
 		return err
 	}
-	if err := r.sendBinary(event); err != nil {
+	if err := c.sendBinary(event); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a tunnel construction request.
-func (r *relay) sendTunnelRequest(id uint64, cluster string, timeout int) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendTunnelInit(id uint64, cluster string, timeout int) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opTunBuild); err != nil {
+	if err := c.sendByte(opTunInit); err != nil {
 		return err
 	}
-	if err := r.sendVarint(id); err != nil {
+	if err := c.sendVarint(id); err != nil {
 		return err
 	}
-	if err := r.sendString(cluster); err != nil {
+	if err := c.sendString(cluster); err != nil {
 		return err
 	}
-	if err := r.sendVarint(uint64(timeout)); err != nil {
+	if err := c.sendVarint(uint64(timeout)); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a tunnel confirmation.
-func (r *relay) sendTunnelConfirm(buildId, tunId uint64) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendTunnelConfirm(buildId, tunId uint64) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opTunConfirm); err != nil {
+	if err := c.sendByte(opTunConfirm); err != nil {
 		return err
 	}
-	if err := r.sendVarint(buildId); err != nil {
+	if err := c.sendVarint(buildId); err != nil {
 		return err
 	}
-	if err := r.sendVarint(tunId); err != nil {
+	if err := c.sendVarint(tunId); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a tunnel transfer allowance.
-func (r *relay) sendTunnelAllowance(id uint64, space uint64) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendTunnelAllowance(id uint64, space int) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opTunAllow); err != nil {
+	if err := c.sendByte(opTunAllow); err != nil {
 		return err
 	}
-	if err := r.sendVarint(id); err != nil {
+	if err := c.sendVarint(id); err != nil {
 		return err
 	}
-	if err := r.sendVarint(space); err != nil {
+	if err := c.sendVarint(uint64(space)); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a tunnel data exchange.
-func (r *relay) sendTunnelData(id uint64, size uint64, payload []byte) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendTunnelTransfer(id uint64, first bool, payload []byte) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opTunTransfer); err != nil {
+	if err := c.sendByte(opTunTransfer); err != nil {
 		return err
 	}
-	if err := r.sendVarint(id); err != nil {
+	if err := c.sendVarint(id); err != nil {
 		return err
 	}
-	if err := r.sendVarint(size); err != nil {
+	size := 0
+	if first {
+		size = len(payload)
+	}
+	if err := c.sendVarint(uint64(size)); err != nil {
 		return err
 	}
-	if err := r.sendBinary(payload); err != nil {
+	if err := c.sendBinary(payload); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Sends a tunnel termination request.
-func (r *relay) sendTunnelClose(id uint64) error {
-	r.sockLock.Lock()
-	defer r.sockLock.Unlock()
+func (c *connection) sendTunnelClose(id uint64) error {
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
 
-	if err := r.sendByte(opTunClose); err != nil {
+	if err := c.sendByte(opTunClose); err != nil {
 		return err
 	}
-	if err := r.sendVarint(id); err != nil {
+	if err := c.sendVarint(id); err != nil {
 		return err
 	}
-	return r.sockBuf.Flush()
+	return c.sockBuf.Flush()
 }
 
 // Retrieves a single byte from the relay connection.
-func (r *relay) recvByte() (byte, error) {
-	return r.sockBuf.ReadByte()
+func (c *connection) recvByte() (byte, error) {
+	return c.sockBuf.ReadByte()
 }
 
 // Retrieves a boolean from the relay connection.
-func (r *relay) recvBool() (bool, error) {
-	b, err := r.recvByte()
+func (c *connection) recvBool() (bool, error) {
+	b, err := c.recvByte()
 	if err != nil {
 		return false, err
 	}
@@ -332,10 +336,10 @@ func (r *relay) recvBool() (bool, error) {
 }
 
 // Retrieves a variable int from the relay in base 128 encoding from the relay connection.
-func (r *relay) recvVarint() (uint64, error) {
+func (c *connection) recvVarint() (uint64, error) {
 	var num uint64
 	for i := uint(0); ; i++ {
-		chunk, err := r.recvByte()
+		chunk, err := c.recvByte()
 		if err != nil {
 			return 0, err
 		}
@@ -348,23 +352,23 @@ func (r *relay) recvVarint() (uint64, error) {
 }
 
 // Retrieves a length-tagged binary array from the relay connection.
-func (r *relay) recvBinary() ([]byte, error) {
+func (c *connection) recvBinary() ([]byte, error) {
 	// Fetch the length of the binary blob
-	size, err := r.recvVarint()
+	size, err := c.recvVarint()
 	if err != nil {
 		return nil, err
 	}
 	// Fetch the blob itself
 	data := make([]byte, size)
-	if _, err := io.ReadFull(r.sockBuf, data); err != nil {
+	if _, err := io.ReadFull(c.sockBuf, data); err != nil {
 		return nil, err
 	}
 	return data, nil
 }
 
 // Retrieves a length-tagged string from the relay connection.
-func (r *relay) recvString() (string, error) {
-	if data, err := r.recvBinary(); err != nil {
+func (c *connection) recvString() (string, error) {
+	if data, err := c.recvBinary(); err != nil {
 		return "", err
 	} else {
 		return string(data), nil
@@ -372,16 +376,16 @@ func (r *relay) recvString() (string, error) {
 }
 
 // Retrieves a connection initiation response (either accept or deny).
-func (r *relay) procInit() (string, error) {
+func (c *connection) procInit() (string, error) {
 	// Retrieve the response opcode
-	op, err := r.recvByte()
+	op, err := c.recvByte()
 	if err != nil {
 		return "", err
 	}
 	// Verify the opcode validity and relay magic string
 	switch {
 	case op == opInit || op == opDeny:
-		if magic, err := r.recvString(); err != nil {
+		if magic, err := c.recvString(); err != nil {
 			return "", err
 		} else if magic != relayMagic {
 			return "", fmt.Errorf("protocol violation: invalid relay magic: %s", magic)
@@ -393,14 +397,14 @@ func (r *relay) procInit() (string, error) {
 	switch op {
 	case opInit:
 		// Read the highest supported protocol version
-		if version, err := r.recvString(); err != nil {
+		if version, err := c.recvString(); err != nil {
 			return "", err
 		} else {
 			return version, nil
 		}
 	case opDeny:
 		// Read the reason for connection denial
-		if reason, err := r.recvString(); err != nil {
+		if reason, err := c.recvString(); err != nil {
 			return "", err
 		} else {
 			return "", fmt.Errorf("connection denied: %s", reason)
@@ -411,200 +415,200 @@ func (r *relay) procInit() (string, error) {
 }
 
 // Retrieves a connection tear-down notification.
-func (r *relay) procClose() (string, error) {
-	return r.recvString()
+func (c *connection) procClose() (string, error) {
+	return c.recvString()
 }
 
 // Retrieves a broadcast delivery.
-func (r *relay) procBroadcast() error {
-	message, err := r.recvBinary()
+func (c *connection) procBroadcast() error {
+	message, err := c.recvBinary()
 	if err != nil {
 		return err
 	}
-	go r.handleBroadcast(message)
+	go c.handleBroadcast(message)
 	return nil
 }
 
 // Retrieves a request delivery.
-func (r *relay) procRequest() error {
-	id, err := r.recvVarint()
+func (c *connection) procRequest() error {
+	id, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	request, err := r.recvBinary()
+	request, err := c.recvBinary()
 	if err != nil {
 		return err
 	}
-	timeout, err := r.recvVarint()
+	timeout, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	go r.handleRequest(id, request, timeout)
+	go c.handleRequest(id, request, int(timeout))
 	return nil
 }
 
 // Retrieves a reply delivery.
-func (r *relay) procReply() error {
-	id, err := r.recvVarint()
+func (c *connection) procReply() error {
+	id, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	timeout, err := r.recvBool()
+	timeout, err := c.recvBool()
 	if err != nil {
 		return err
 	}
 	if timeout {
-		go r.handleReply(id, nil, "")
+		go c.handleReply(id, nil, "")
 		return nil
 	}
 	// The request didn't time out, get the result
-	success, err := r.recvBool()
+	success, err := c.recvBool()
 	if err != nil {
 		return err
 	}
 	if success {
-		reply, err := r.recvBinary()
+		reply, err := c.recvBinary()
 		if err != nil {
 			return err
 		}
-		go r.handleReply(id, reply, "")
+		go c.handleReply(id, reply, "")
 	} else {
-		fault, err := r.recvString()
+		fault, err := c.recvString()
 		if err != nil {
 			return err
 		}
-		go r.handleReply(id, nil, fault)
+		go c.handleReply(id, nil, fault)
 	}
 	return nil
 }
 
 // Retrieves a topic event delivery.
-func (r *relay) procPublish() error {
-	topic, err := r.recvString()
+func (c *connection) procPublish() error {
+	topic, err := c.recvString()
 	if err != nil {
 		return err
 	}
-	event, err := r.recvBinary()
+	event, err := c.recvBinary()
 	if err != nil {
 		return err
 	}
-	go r.handlePublish(topic, event)
+	go c.handlePublish(topic, event)
 	return nil
 }
 
 // Retrieves a tunnel initiation message.
-func (r *relay) procTunnelRequest() error {
-	id, err := r.recvVarint()
+func (c *connection) procTunnelInit() error {
+	id, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	chunk, err := r.recvVarint()
+	chunkLimit, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	go r.handleTunnelRequest(id, chunk)
+	go c.handleTunnelInit(id, int(chunkLimit))
 	return nil
 }
 
 // Retrieves a tunnel construction result.
-func (r *relay) procTunnelReply() error {
-	id, err := r.recvVarint()
+func (c *connection) procTunnelResult() error {
+	id, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	timeout, err := r.recvBool()
+	timeout, err := c.recvBool()
 	if err != nil {
 		return err
 	}
 	if timeout {
-		go r.handleTunnelReply(id, 0)
+		go c.handleTunnelResult(id, 0)
 		return nil
 	}
 	// The tunnel didn't time out, proceed
-	chunk, err := r.recvVarint()
+	chunkLimit, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	go r.handleTunnelReply(id, chunk)
+	go c.handleTunnelResult(id, int(chunkLimit))
 	return nil
 }
 
 // Retrieves a tunnel transfer allowance message.
-func (r *relay) procTunnelAllowance() error {
-	id, err := r.recvVarint()
+func (c *connection) procTunnelAllowance() error {
+	id, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	space, err := r.recvVarint()
+	space, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	go r.handleTunnelAllowance(id, space)
+	go c.handleTunnelAllowance(id, int(space))
 	return nil
 }
 
 // Retrieves a tunnel data exchange message.
-func (r *relay) procTunnelData() error {
-	id, err := r.recvVarint()
+func (c *connection) procTunnelTransfer() error {
+	id, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	size, err := r.recvVarint()
+	size, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	payload, err := r.recvBinary()
+	payload, err := c.recvBinary()
 	if err != nil {
 		return err
 	}
-	r.handleTunnelData(id, size, payload) // Note, NOT separate go-routine!
+	c.handleTunnelTransfer(id, int(size), payload)
 	return nil
 }
 
 // Retrieves a tunnel closure notification.
-func (r *relay) procTunnelClose() error {
-	id, err := r.recvVarint()
+func (c *connection) procTunnelClose() error {
+	id, err := c.recvVarint()
 	if err != nil {
 		return err
 	}
-	reason, err := r.recvString()
+	reason, err := c.recvString()
 	if err != nil {
 		return err
 	}
-	go r.handleTunnelClose(id, reason)
+	go c.handleTunnelClose(id, reason)
 	return nil
 }
 
 // Retrieves messages from the client connection and keeps processing them until
 // either the relay closes (graceful close) or the connection drops.
-func (r *relay) process() {
+func (c *connection) process() {
 	var op byte
 	var err error
 	for closed := false; !closed && err == nil; {
 		// Retrieve the next opcode and call the specific handler for the rest
-		if op, err = r.recvByte(); err == nil {
+		if op, err = c.recvByte(); err == nil {
 			switch op {
-			case opBcast:
-				err = r.procBroadcast()
-			case opReq:
-				err = r.procRequest()
-			case opRep:
-				err = r.procReply()
-			case opPub:
-				err = r.procPublish()
-			case opTunReq:
-				err = r.procTunnelRequest()
-			case opTunRep:
-				err = r.procTunnelReply()
-			case opTunAck:
-				err = r.procTunnelAllowance()
-			case opTunData:
-				err = r.procTunnelData()
+			case opBroadcast:
+				err = c.procBroadcast()
+			case opRequest:
+				err = c.procRequest()
+			case opReply:
+				err = c.procReply()
+			case opPublish:
+				err = c.procPublish()
+			case opTunInit:
+				err = c.procTunnelInit()
+			case opTunConfirm:
+				err = c.procTunnelResult()
+			case opTunAllow:
+				err = c.procTunnelAllowance()
+			case opTunTransfer:
+				err = c.procTunnelTransfer()
 			case opTunClose:
-				err = r.procTunnelClose()
+				err = c.procTunnelClose()
 			case opClose:
 				// Retrieve any reason for remote closure
-				if reason, cerr := r.procClose(); cerr != nil {
+				if reason, cerr := c.procClose(); cerr != nil {
 					err = cerr
 				} else if len(reason) > 0 {
 					err = fmt.Errorf("connection dropped: %s", reason)
@@ -617,13 +621,13 @@ func (r *relay) process() {
 		}
 	}
 	// Close the socket and signal termination to all blocked threads
-	r.sock.Close()
-	close(r.term)
+	c.sock.Close()
+	close(c.term)
 
-	// Notify the application if the connection dropped
-	r.handleDrop(err)
+	// Notify the application of the connection closure
+	c.handleClose(err)
 
 	// Wait for termination sync
-	errc := <-r.quit
+	errc := <-c.quit
 	errc <- err
 }

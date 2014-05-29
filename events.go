@@ -11,122 +11,122 @@
 package iris
 
 import (
+	"fmt"
 	"log"
 )
 
-// Forwards an application targeted broadcast event to the connection handler.
-func (r *relay) handleBroadcast(msg []byte) {
-	r.handler.HandleBroadcast(msg)
+// Forwards an application broadcast message to the connection handler.
+func (c *connection) handleBroadcast(message []byte) {
+	c.handler.HandleBroadcast(message)
 }
 
-// Services a request by calling the app layer handler on a new thread and
-// replying with the result.
-func (r *relay) handleRequest(reqId uint64, req []byte) {
-	rep := r.handler.HandleRequest(req)
-	if err := r.sendReply(reqId, rep); err != nil {
+// Services an application request by calling the upper layer handler and returns
+// the response or the encountered error.
+func (c *connection) handleRequest(id uint64, request []byte, timeout int) {
+	reply, fault := c.handler.HandleRequest(request)
+	if err := c.sendReply(id, reply, fault.Error()); err != nil {
 		log.Printf("iris: failed to send reply: %v.", err)
 	}
 }
 
-// Looks up the pending application request and forwards the reply.
-func (r *relay) handleReply(reqId uint64, rep []byte) {
-	r.reqLock.RLock()
-	defer r.reqLock.RUnlock()
-	r.reqPend[reqId] <- rep
+// Looks up a pending request and delivers the result.
+func (c *connection) handleReply(id uint64, reply []byte, fault string) {
+	c.reqLock.RLock()
+	defer c.reqLock.RUnlock()
+
+	if reply == nil && len(fault) == 0 {
+		c.reqErrs[id] <- ErrTimeout
+	} else if reply == nil {
+		c.reqErrs[id] <- fmt.Errorf("remote error: %s", fault)
+	} else {
+		c.reqReps[id] <- reply
+	}
 }
 
-// Forwards a remote topic publish event to the subscription handler.
-func (r *relay) handlePublish(topic string, msg []byte) {
+// Forwards a topic publish event to the subscription handler.
+func (c *connection) handlePublish(topic string, event []byte) {
 	// Fetch the handler and release the lock fast
-	r.subLock.RLock()
-	sub, ok := r.subLive[topic]
-	r.subLock.RUnlock()
+	c.subLock.RLock()
+	sub, ok := c.subLive[topic]
+	c.subLock.RUnlock()
 
 	// Make sure the subscription is still live
 	if ok {
-		sub.HandleEvent(msg)
+		sub.HandleEvent(event)
 	} else {
 		log.Printf("iris: stale publish arrived on: %v.", topic)
 	}
 }
 
 // Notifies the application of the relay link going down.
-func (r *relay) handleDrop(reason error) {
-	// Notify the app of the drop if premature
+func (c *connection) handleClose(reason error) {
+	// Notify the client of the drop if premature
 	if reason != nil {
-		r.handler.HandleDrop(reason)
+		c.handler.HandleDrop(reason)
 	}
-
 	// Close all open tunnels
-	r.tunLock.Lock()
-	for _, tun := range r.tunLive {
-		tun.handleClose()
+	c.tunLock.Lock()
+	for _, tun := range c.tunLive {
+		tun.handleClose("connection dropped")
 	}
-	r.tunLive = nil
-	r.tunLock.Unlock()
+	c.tunLive = nil
+	c.tunLock.Unlock()
 }
 
 // Opens a new local tunnel endpoint and binds it to the remote side.
-func (r *relay) handleTunnelRequest(tmpId uint64, buf int) {
-	if tun, err := r.acceptTunnel(tmpId, buf); err == nil {
-		r.handler.HandleTunnel(tun)
+func (c *connection) handleTunnelInit(id uint64, chunkLimit int) {
+	if tun, err := c.acceptTunnel(id, chunkLimit); err == nil {
+		c.handler.HandleTunnel(tun)
 	} else {
 		log.Printf("iris: failed to accept inbound tunnel: %v.", err)
 	}
 }
 
-// Forwards the tunneling reply to the requested tunnel.
-func (r *relay) handleTunnelReply(tunId uint64, buf int, timeout bool) {
+// Forwards the tunnel construction result to the requested tunnel.
+func (c *connection) handleTunnelResult(id uint64, chunkLimit int) {
 	// Retrieve the tunnel
-	r.tunLock.RLock()
-	tun := r.tunLive[tunId]
-	r.tunLock.RUnlock()
+	c.tunLock.RLock()
+	tun := c.tunLive[id]
+	c.tunLock.RUnlock()
 
 	// Finalize initialization
-	tun.handleInit(buf, timeout)
+	tun.handleInitResult(chunkLimit)
 }
 
-// Forwards a tunnel send acknowledgment to the specific tunnel.
-func (r *relay) handleTunnelAck(tunId uint64) {
+// Forwards a tunnel data allowance to the requested tunnel.
+func (c *connection) handleTunnelAllowance(id uint64, space int) {
 	// Retrieve the tunnel
-	r.tunLock.RLock()
-	tun, ok := r.tunLive[tunId]
-	r.tunLock.RUnlock()
+	c.tunLock.RLock()
+	tun, ok := c.tunLive[id]
+	c.tunLock.RUnlock()
 
-	// Make sure the tunnel is still alive
+	// Notify it of the granted data allowance
 	if ok {
-		tun.handleAck()
-	} else {
-		// Rare race, valid, left in for debugging purposes
-		//log.Printf("iris: stale tunnel ack.")
+		tun.handleAllowance(space)
 	}
 }
 
-// Forwards the received data to the tunnel for delivery.
-func (r *relay) handleTunnelData(tunId uint64, msg []byte) {
-	r.tunLock.RLock()
-	defer r.tunLock.RUnlock()
+// Forwards a message chunk transfer to the requested tunnel.
+func (c *connection) handleTunnelTransfer(id uint64, size int, chunk []byte) {
+	// Retrieve the tunnel
+	c.tunLock.RLock()
+	tun, ok := c.tunLive[id]
+	c.tunLock.RUnlock()
 
-	// Make sure the tunnel is still alive
-	if tun, ok := r.tunLive[tunId]; ok {
-		tun.handleData(msg)
-	} else {
-		// Rare race, valid, left in for debugging purposes
-		//log.Printf("iris: stale data for tunnel #%v.", tunId)
+	// Notify it of the arrived message chunk
+	if ok {
+		tun.handleTransfer(size, chunk)
 	}
 }
 
 // Terminates a tunnel, stopping all data transfers.
-func (r *relay) handleTunnelClose(tunId uint64) {
-	r.tunLock.Lock()
-	defer r.tunLock.Unlock()
+func (c *connection) handleTunnelClose(id uint64, reason string) {
+	c.tunLock.Lock()
+	defer c.tunLock.Unlock()
 
 	// Make sure the tunnel is still alive
-	if tun, ok := r.tunLive[tunId]; ok {
-		tun.handleClose()
-		delete(r.tunLive, tunId)
-	} else {
-		// Rare race, valid, left in for debugging purposes
-		//log.Printf("iris: stale close of tunnel #%v.", tunId)
+	if tun, ok := c.tunLive[id]; ok {
+		tun.handleClose(reason)
+		delete(c.tunLive, id)
 	}
 }
