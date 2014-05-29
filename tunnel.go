@@ -31,11 +31,11 @@ type tunnel struct {
 	// Quality of service fields
 	itoaBuf  *queue.Queue  // Iris to application message buffer
 	itoaSign chan struct{} // Message arrival signaler
-	itoaLock *sync.Mutex   // Protects the buffer and signaler
+	itoaLock sync.Mutex    // Protects the buffer and signaler
 
 	atoiSpace int           // Application to Iris space allowance
 	atoiSign  chan struct{} // Allowance grant signaler
-	atoiLock  *sync.Mutex   // Protects the allowance and signaler
+	atoiLock  sync.Mutex    // Protects the allowance and signaler
 
 	// Bookkeeping fields
 	init chan bool     // Initialization channel for outbound tunnels
