@@ -27,8 +27,8 @@ func (r *requester) HandleBroadcast(msg []byte) {
 	panic("Broadcast passed to request handler")
 }
 
-func (r *requester) HandleRequest(req []byte) []byte {
-	return req
+func (r *requester) HandleRequest(req []byte) ([]byte, error) {
+	return req, nil
 }
 
 func (r *requester) HandleTunnel(tun iris.Tunnel) {

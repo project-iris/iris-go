@@ -28,7 +28,7 @@ func (b *broadcaster) HandleBroadcast(msg []byte) {
 	b.msgs <- msg
 }
 
-func (b *broadcaster) HandleRequest(req []byte) []byte {
+func (b *broadcaster) HandleRequest(req []byte) ([]byte, error) {
 	panic("Request passed to broadcast handler")
 }
 

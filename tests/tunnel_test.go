@@ -23,7 +23,7 @@ func (t *tunneler) HandleBroadcast(msg []byte) {
 	panic("Broadcast passed to tunnel handler")
 }
 
-func (t *tunneler) HandleRequest(req []byte) []byte {
+func (t *tunneler) HandleRequest(req []byte) ([]byte, error) {
 	panic("Request passed to tunnel handler")
 }
 
