@@ -86,9 +86,13 @@ func (c *connection) initTunnel(cluster string, timeout int) (Tunnel, error) {
 		select {
 		case init := <-tun.init:
 			if init {
-				return tun, nil
+				// Send the data allowance
+				if err = c.sendTunnelAllowance(tun.id, tunnelBuffer); err == nil {
+					return tun, nil
+				}
+			} else {
+				err = ErrTimeout
 			}
-			err = ErrTimeout
 		case <-c.term:
 			err = ErrClosing
 		}
@@ -117,7 +121,13 @@ func (c *connection) acceptTunnel(initId uint64, chunkLimit int) (Tunnel, error)
 		c.tunLock.Unlock()
 		return nil, err
 	}
-	// Return the accepted tunnel
+	// Send the data allowance
+	if err := c.sendTunnelAllowance(tun.id, tunnelBuffer); err != nil {
+		c.tunLock.Lock()
+		delete(c.tunLive, tun.id)
+		c.tunLock.Unlock()
+		return nil, err
+	}
 	return tun, nil
 }
 
@@ -271,7 +281,7 @@ func (t *tunnel) handleTransfer(size int, chunk []byte) {
 		if t.chunkBuf != nil {
 			log.Printf("Discarding incomplete tunnel message (%d bytes).", len(t.chunkBuf))
 		}
-		t.chunkBuf = make([]byte, size)
+		t.chunkBuf = make([]byte, 0, size)
 	}
 	// Append the new chunk and check completion
 	t.chunkBuf = append(t.chunkBuf, chunk...)
