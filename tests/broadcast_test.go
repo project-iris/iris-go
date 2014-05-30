@@ -59,7 +59,6 @@ func TestBroadcast(t *testing.T) {
 					return
 				}
 			}
-			barrier.Sync() // Make sure we don't terminate prematurely
 			barrier.Exit(nil)
 		}(i)
 	}
