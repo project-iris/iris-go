@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/project-iris/iris/pool"
 	"gopkg.in/project-iris/iris-go.v0"
 )
 
@@ -73,8 +74,12 @@ func TestPublish(t *testing.T) {
 					return
 				}
 				hands = append(hands, hand)
-				defer conn.Unsubscribe(topic)
+				defer func(topic string) {
+					conn.Unsubscribe(topic)
+					time.Sleep(100 * time.Millisecond)
+				}(topic)
 			}
+			time.Sleep(100 * time.Millisecond)
 			barrier.Sync()
 
 			// Publish to all subscribers
@@ -90,39 +95,9 @@ func TestPublish(t *testing.T) {
 			barrier.Sync()
 
 			// Verify all the topic deliveries
-			for i := 0; i < len(hands); i++ {
-				// Retrieve all the published events
-				events := make(map[string]struct{})
-				for j := 0; j < (conf.clients+conf.servers)*conf.events; j++ {
-					select {
-					case event := <-hands[i].delivers:
-						events[string(event)] = struct{}{}
-					case <-time.After(time.Second):
-						barrier.Exit(errors.New("event retrieve timeout"))
-						return
-					}
-				}
-				// Verify all the individual events
-				for j := 0; j < conf.clients; j++ {
-					for k := 0; k < conf.events; k++ {
-						msg := fmt.Sprintf("client #%d, event %d", j, k)
-						if _, ok := events[msg]; !ok {
-							barrier.Exit(fmt.Errorf("event not found: %s", msg))
-							return
-						}
-						delete(events, msg)
-					}
-				}
-				for j := 0; j < conf.servers; j++ {
-					for k := 0; k < conf.events; k++ {
-						msg := fmt.Sprintf("server #%d, event %d", j, k)
-						if _, ok := events[msg]; !ok {
-							barrier.Exit(fmt.Errorf("event not found: %s", msg))
-							return
-						}
-						delete(events, msg)
-					}
-				}
+			if err := publishVerifyEvents(conf.clients, conf.servers, conf.events, hands); err != nil {
+				barrier.Exit(err)
+				return
 			}
 			barrier.Exit(nil)
 		}(i)
@@ -152,8 +127,12 @@ func TestPublish(t *testing.T) {
 					return
 				}
 				hands = append(hands, hand)
-				defer handler.conn.Unsubscribe(topic)
+				defer func(topic string) {
+					handler.conn.Unsubscribe(topic)
+					time.Sleep(100 * time.Millisecond)
+				}(topic)
 			}
+			time.Sleep(100 * time.Millisecond)
 			barrier.Sync()
 
 			// Publish to all subscribers
@@ -169,39 +148,9 @@ func TestPublish(t *testing.T) {
 			barrier.Sync()
 
 			// Verify all the topic deliveries
-			for i := 0; i < len(hands); i++ {
-				// Retrieve all the published events
-				events := make(map[string]struct{})
-				for j := 0; j < (conf.clients+conf.servers)*conf.events; j++ {
-					select {
-					case event := <-hands[i].delivers:
-						events[string(event)] = struct{}{}
-					case <-time.After(time.Second):
-						barrier.Exit(errors.New("event retrieve timeout"))
-						return
-					}
-				}
-				// Verify all the individual events
-				for j := 0; j < conf.clients; j++ {
-					for k := 0; k < conf.events; k++ {
-						msg := fmt.Sprintf("client #%d, event %d", j, k)
-						if _, ok := events[msg]; !ok {
-							barrier.Exit(fmt.Errorf("event not found: %s", msg))
-							return
-						}
-						delete(events, msg)
-					}
-				}
-				for j := 0; j < conf.servers; j++ {
-					for k := 0; k < conf.events; k++ {
-						msg := fmt.Sprintf("server #%d, event %d", j, k)
-						if _, ok := events[msg]; !ok {
-							barrier.Exit(fmt.Errorf("event not found: %s", msg))
-							return
-						}
-						delete(events, msg)
-					}
-				}
+			if err := publishVerifyEvents(conf.clients, conf.servers, conf.events, hands); err != nil {
+				barrier.Exit(err)
+				return
 			}
 			barrier.Exit(nil)
 		}(i)
@@ -218,107 +167,140 @@ func TestPublish(t *testing.T) {
 	}
 }
 
-/*
-// Benchmarks the pass-through of a single message publish.
-func BenchmarkPubSubLatency(b *testing.B) {
-	// Configure the benchmark
-	cluster := "bench-pubsub-latency"
-	topic := "bench-topic-latency"
-	handler := &subscriber{
-		msgs: make(chan []byte, b.N),
+// Verifies the delivered topic events.
+func publishVerifyEvents(clients, servers, publishes int, hands []*pubsubTestTopicHandler) error {
+	// Verify each topic handler separately
+	for i := 0; i < len(hands); i++ {
+		// Retrieve all the published events
+		events := make(map[string]struct{})
+		for j := 0; j < (clients+servers)*publishes; j++ {
+			select {
+			case event := <-hands[i].delivers:
+				events[string(event)] = struct{}{}
+			case <-time.After(time.Second):
+				return errors.New("event retrieve timeout")
+			}
+		}
+		// Verify all the individual events
+		for j := 0; j < clients; j++ {
+			for k := 0; k < publishes; k++ {
+				msg := fmt.Sprintf("client #%d, event %d", j, k)
+				if _, ok := events[msg]; !ok {
+					return fmt.Errorf("event not found: %s", msg)
+				}
+				delete(events, msg)
+			}
+		}
+		for j := 0; j < servers; j++ {
+			for k := 0; k < publishes; k++ {
+				msg := fmt.Sprintf("server #%d, event %d", j, k)
+				if _, ok := events[msg]; !ok {
+					return fmt.Errorf("event not found: %s", msg)
+				}
+				delete(events, msg)
+			}
+		}
 	}
-	// Set up the connection
-	conn, err := iris.Connect(relayPort, cluster, nil)
+	return nil
+}
+
+// Benchmarks the latency of a single publish operation.
+func BenchmarkPublishLatency(b *testing.B) {
+	// Connect to the local relay
+	conn, err := iris.Connect(config.relay)
 	if err != nil {
-		b.Fatalf("connection failed: %v.", err)
+		b.Fatalf("connection failed: %v", err)
 	}
 	defer conn.Close()
 
-	// Subscribe (and sleep a bit for state propagation)
-	if err := conn.Subscribe(topic, handler); err != nil {
-		b.Fatalf("failed to subscribe: %v", err)
+	// Subscribe to a topic and wait for state propagation
+	handler := &pubsubTestTopicHandler{
+		delivers: make(chan []byte, b.N),
 	}
-	time.Sleep(10 * time.Millisecond)
+	if err := conn.Subscribe(config.topic, handler); err != nil {
+		b.Fatalf("subscription failed: %v", err)
+	}
+	defer func() {
+		conn.Unsubscribe(config.topic)
+		time.Sleep(100 * time.Millisecond)
+	}()
+	time.Sleep(100 * time.Millisecond)
 
 	// Reset timer and time sync publish
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := conn.Publish(topic, []byte{byte(i)}); err != nil {
-			b.Fatalf("iter %d: failed to publish: %v.", i, err)
+		if err := conn.Publish(config.topic, []byte{byte(i)}); err != nil {
+			b.Fatalf("failed to publish: %v.", err)
 		}
-		<-handler.msgs
+		<-handler.delivers
 	}
 }
 
-// Benchmarks the pass-through of a stream of publishes.
-func BenchmarkPubSubThroughput1Threads(b *testing.B) {
-	benchmarkPubSubThroughput(1, b)
+// Benchmarks the throughput of a stream of concurrent publishes.
+func BenchmarkPublishThroughput1Threads(b *testing.B) {
+	benchmarkPublishThroughput(1, b)
 }
 
-func BenchmarkPubSubThroughput2Threads(b *testing.B) {
-	benchmarkPubSubThroughput(2, b)
+func BenchmarkPublishThroughput2Threads(b *testing.B) {
+	benchmarkPublishThroughput(2, b)
 }
 
-func BenchmarkPubSubThroughput4Threads(b *testing.B) {
-	benchmarkPubSubThroughput(4, b)
+func BenchmarkPublishThroughput4Threads(b *testing.B) {
+	benchmarkPublishThroughput(4, b)
 }
 
-func BenchmarkPubSubThroughput8Threads(b *testing.B) {
-	benchmarkPubSubThroughput(8, b)
+func BenchmarkPublishThroughput8Threads(b *testing.B) {
+	benchmarkPublishThroughput(8, b)
 }
 
-func BenchmarkPubSubThroughput16Threads(b *testing.B) {
-	benchmarkPubSubThroughput(16, b)
+func BenchmarkPublishThroughput16Threads(b *testing.B) {
+	benchmarkPublishThroughput(16, b)
 }
 
-func BenchmarkPubSubThroughput32Threads(b *testing.B) {
-	benchmarkPubSubThroughput(32, b)
+func BenchmarkPublishThroughput32Threads(b *testing.B) {
+	benchmarkPublishThroughput(32, b)
 }
 
-func BenchmarkPubSubThroughput64Threads(b *testing.B) {
-	benchmarkPubSubThroughput(64, b)
+func BenchmarkPublishThroughput64Threads(b *testing.B) {
+	benchmarkPublishThroughput(64, b)
 }
 
-func BenchmarkPubSubThroughput128Threads(b *testing.B) {
-	benchmarkPubSubThroughput(128, b)
+func BenchmarkPublishThroughput128Threads(b *testing.B) {
+	benchmarkPublishThroughput(128, b)
 }
 
-func benchmarkPubSubThroughput(threads int, b *testing.B) {
-	// Configure the benchmark
-	cluster := "bench-pubsub-throughput"
-	topic := "bench-topic-throughput"
-	handler := &subscriber{
-		msgs: make(chan []byte, b.N),
-	}
-	// Set up the connection
-	conn, err := iris.Connect(relayPort, cluster, nil)
+func benchmarkPublishThroughput(threads int, b *testing.B) {
+	// Connect to the local relay
+	conn, err := iris.Connect(config.relay)
 	if err != nil {
-		b.Fatalf("connection failed: %v.", err)
+		b.Fatalf("connection failed: %v", err)
 	}
 	defer conn.Close()
 
-	// Subscribe (and sleep a bit for state propagation)
-	if err := conn.Subscribe(topic, handler); err != nil {
-		b.Fatalf("failed to subscribe: %v", err)
+	// Subscribe to a topic and wait for state propagation
+	handler := &pubsubTestTopicHandler{
+		delivers: make(chan []byte, b.N),
 	}
-	time.Sleep(10 * time.Millisecond)
+	if err := conn.Subscribe(config.topic, handler); err != nil {
+		b.Fatalf("subscription failed: %v", err)
+	}
+	defer func() {
+		conn.Unsubscribe(config.topic)
+		time.Sleep(100 * time.Millisecond)
+	}()
+	time.Sleep(100 * time.Millisecond)
 
 	// Create the thread pool with the concurrent publishes
 	workers := pool.NewThreadPool(threads)
 	for i := 0; i < b.N; i++ {
 		workers.Schedule(func() {
-			if err := conn.Publish(topic, []byte{byte(i)}); err != nil {
-				b.Fatalf("iter %d: failed to publish: %v.", i, err)
+			if err := conn.Publish(config.topic, []byte{byte(i)}); err != nil {
+				b.Fatalf("failed to publish: %v.", err)
 			}
 		})
 	}
 	// Reset timer and benchmark the message transfer
 	b.ResetTimer()
 	workers.Start()
-	for i := 0; i < b.N; i++ {
-		<-handler.msgs
-	}
-	b.StopTimer()
-	workers.Terminate(true)
+	workers.Terminate(false)
 }
-*/
