@@ -147,7 +147,7 @@ func TestRequestFail(t *testing.T) {
 }
 
 // Benchmarks the latency of a single request/reply operation.
-func BenchmarkReqRepLatency(b *testing.B) {
+func BenchmarkRequestLatency(b *testing.B) {
 	// Create the service handler
 	handler := new(reqrepTestHandler)
 
@@ -168,39 +168,39 @@ func BenchmarkReqRepLatency(b *testing.B) {
 }
 
 // Benchmarks the throughput of a stream of concurrent requests.
-func BenchmarkReqRepThroughput1Threads(b *testing.B) {
-	benchmarkReqRepThroughput(1, b)
+func BenchmarkRequestThroughput1Threads(b *testing.B) {
+	benchmarkRequestThroughput(1, b)
 }
 
-func BenchmarkReqRepThroughput2Threads(b *testing.B) {
-	benchmarkReqRepThroughput(2, b)
+func BenchmarkRequestThroughput2Threads(b *testing.B) {
+	benchmarkRequestThroughput(2, b)
 }
 
-func BenchmarkReqRepThroughput4Threads(b *testing.B) {
-	benchmarkReqRepThroughput(4, b)
+func BenchmarkRequestThroughput4Threads(b *testing.B) {
+	benchmarkRequestThroughput(4, b)
 }
 
-func BenchmarkReqRepThroughput8Threads(b *testing.B) {
-	benchmarkReqRepThroughput(8, b)
+func BenchmarkRequestThroughput8Threads(b *testing.B) {
+	benchmarkRequestThroughput(8, b)
 }
 
-func BenchmarkReqRepThroughput16Threads(b *testing.B) {
-	benchmarkReqRepThroughput(16, b)
+func BenchmarkRequestThroughput16Threads(b *testing.B) {
+	benchmarkRequestThroughput(16, b)
 }
 
-func BenchmarkReqRepThroughput32Threads(b *testing.B) {
-	benchmarkReqRepThroughput(32, b)
+func BenchmarkRequestThroughput32Threads(b *testing.B) {
+	benchmarkRequestThroughput(32, b)
 }
 
-func BenchmarkReqRepThroughput64Threads(b *testing.B) {
-	benchmarkReqRepThroughput(64, b)
+func BenchmarkRequestThroughput64Threads(b *testing.B) {
+	benchmarkRequestThroughput(64, b)
 }
 
-func BenchmarkReqRepThroughput128Threads(b *testing.B) {
-	benchmarkReqRepThroughput(128, b)
+func BenchmarkRequestThroughput128Threads(b *testing.B) {
+	benchmarkRequestThroughput(128, b)
 }
 
-func benchmarkReqRepThroughput(threads int, b *testing.B) {
+func benchmarkRequestThroughput(threads int, b *testing.B) {
 	// Create the service handler
 	handler := new(reqrepTestHandler)
 
