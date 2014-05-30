@@ -31,7 +31,7 @@ func (t *tunneler) HandleTunnel(tun iris.Tunnel) {
 	defer tun.Close()
 	for done := false; !done; {
 		if msg, err := tun.Recv(0); err == nil {
-			if err := tun.Send(msg, time.Second); err != nil {
+			if err := tun.Send(msg, 0); err != nil {
 				panic(err)
 			}
 		} else {
@@ -120,7 +120,7 @@ func TestTunnelMulti(t *testing.T) {
 			proc.Wait()
 
 			// Open a tunnel to the group
-			tun, err := conn.Tunnel(cluster, 500*time.Millisecond)
+			tun, err := conn.Tunnel(cluster, 5*time.Second)
 			if err != nil {
 				errs <- fmt.Errorf("tunneling failed: %v", err)
 				done.Done()
@@ -128,7 +128,7 @@ func TestTunnelMulti(t *testing.T) {
 			}
 			// Serialize a load of messages
 			for i := 0; i < messages; i++ {
-				if err := tun.Send([]byte(fmt.Sprintf("%d", i)), 500*time.Millisecond); err != nil {
+				if err := tun.Send([]byte(fmt.Sprintf("%d", i)), 5*time.Second); err != nil {
 					errs <- fmt.Errorf("send failed: %v", err)
 					done.Done()
 					return
@@ -136,7 +136,7 @@ func TestTunnelMulti(t *testing.T) {
 			}
 			// Read back the echo stream and verify
 			for i := 0; i < messages; i++ {
-				if msg, err := tun.Recv(500 * time.Millisecond); err != nil {
+				if msg, err := tun.Recv(5 * time.Second); err != nil {
 					errs <- fmt.Errorf("receive failed: %v", err)
 					done.Done()
 					return

@@ -202,7 +202,7 @@ func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
 	// Create the timeout signaler
 	var after <-chan time.Time
 	if timeout != 0 {
-		after = time.After(time.Duration(timeout) * time.Millisecond)
+		after = time.After(timeout)
 	}
 	// Wait for a message to arrive
 	select {
