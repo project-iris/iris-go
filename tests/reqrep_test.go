@@ -6,14 +6,9 @@
 
 package tests
 
-/*
 import (
-	"bytes"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"io"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,189 +16,158 @@ import (
 	"gopkg.in/project-iris/iris-go.v0"
 )
 
-// Connection handler for the req/rep tests.
-type requester struct {
+// Service handler for the request/reply tests.
+type reqrepTestHandler struct {
+	conn *iris.Connection
 }
 
-func (r *requester) HandleBroadcast(msg []byte) {
-	panic("Broadcast passed to request handler")
+func (r *reqrepTestHandler) Init(conn *iris.Connection) error         { r.conn = conn; return nil }
+func (r *reqrepTestHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
+func (r *reqrepTestHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
+func (r *reqrepTestHandler) HandleTunnel(tun *iris.Tunnel)            { panic("not implemented") }
+func (r *reqrepTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
+
+// Service handler for the request/reply failure tests.
+type reqrepFailTestHandler struct {
+	conn *iris.Connection
 }
 
-func (r *requester) HandleRequest(req []byte) ([]byte, error) {
-	if bytes.Compare(req, []byte("fail")) != 0 {
-		return req, nil
-	} else {
-		return nil, errors.New("failed")
-	}
+func (r *reqrepFailTestHandler) Init(conn *iris.Connection) error { r.conn = conn; return nil }
+func (r *reqrepFailTestHandler) HandleBroadcast(msg []byte)       { panic("not implemented") }
+func (r *reqrepFailTestHandler) HandleTunnel(tun *iris.Tunnel)    { panic("not implemented") }
+func (r *reqrepFailTestHandler) HandleDrop(reason error)          { panic("not implemented") }
+
+func (r *reqrepFailTestHandler) HandleRequest(req []byte) ([]byte, error) {
+	return nil, errors.New(string(req))
 }
 
-func (r *requester) HandleTunnel(tun iris.Tunnel) {
-	panic("Inbound tunnel on request handler")
-}
+// Tests multiple concurrent client and service requests.
+func TestRequest(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		clients  int
+		servers  int
+		requests int
+	}{25, 25, 25}
 
-func (r *requester) HandleDrop(reason error) {
-	panic("Connection dropped on request handler: " + reason.Error())
-}
+	barrier := newBarrier(conf.clients + conf.servers)
 
-// Sends a few requests to one-self, waiting for the echo.
-func TestReqRepSingle(t *testing.T) {
-	// Configure the test
-	requests := 1000
-
-	// Connect to the Iris network
-	cluster := "test-reqrep-single"
-	conn, err := iris.Connect(relayPort, cluster, new(requester))
-	if err != nil {
-		t.Fatalf("connection failed: %v.", err)
-	}
-	defer conn.Close()
-
-	// Send a handful of requests, verifying the replies
-	for i := 0; i < requests; i++ {
-		// Generate a new random message
-		req := make([]byte, 128)
-		io.ReadFull(rand.Reader, req)
-
-		// Send request, verify reply
-		rep, err := conn.Request(cluster, req, 250*time.Millisecond)
-		if err != nil {
-			t.Fatalf("request failed: %v.", err)
-		}
-		if bytes.Compare(rep, req) != 0 {
-			t.Fatalf("reply mismatch: have %v, want %v.", rep, req)
-		}
-	}
-}
-
-// Starts a handful of concurrent servers which send requests to each other.
-func TestReqRepMulti(t *testing.T) {
-	// Configure the test
-	servers := 75
-	requests := 75
-
-	start := new(sync.WaitGroup)
-	proc := new(sync.WaitGroup)
-	proc.Add(1)
-	done := new(sync.WaitGroup)
-	term := new(sync.WaitGroup)
-	term.Add(1)
-	kill := new(sync.WaitGroup)
-
-	// Start up the concurrent requesters
-	errs := make(chan error, servers)
-	for i := 0; i < servers; i++ {
-		start.Add(1)
-		done.Add(1)
-		kill.Add(1)
-		go func() {
-			defer kill.Done()
-
-			// Connect to the relay
-			cluster := "test-reqrep-multi"
-			conn, err := iris.Connect(relayPort, cluster, new(requester))
+	// Start up the concurrent requesting clients
+	for i := 0; i < conf.clients; i++ {
+		go func(client int) {
+			// Connect to the local relay
+			conn, err := iris.Connect(config.relay)
 			if err != nil {
-				errs <- fmt.Errorf("connection failed: %v", err)
-				start.Done()
+				barrier.Exit(fmt.Errorf("connection failed: %v", err))
 				return
 			}
 			defer conn.Close()
+			barrier.Sync()
 
-			// Notify parent and wait for continuation permission
-			start.Done()
-			proc.Wait()
-
-			// Send the requests to the group and wait for the replies
-			for j := 0; j < requests; j++ {
-				// Generate a new random message
-				req := make([]byte, 128)
-				io.ReadFull(rand.Reader, req)
-
-				// Send request, verify reply
-				rep, err := conn.Request(cluster, req, 250*time.Millisecond)
-				if err != nil {
-					errs <- fmt.Errorf("request failed: %v", err)
-					done.Done()
+			// Request from the service cluster
+			for i := 0; i < conf.requests; i++ {
+				request := fmt.Sprintf("client #%d, request %d", client, i)
+				if reply, err := conn.Request(config.cluster, []byte(request), time.Second); err != nil {
+					barrier.Exit(fmt.Errorf("client request failed: %v", err))
 					return
-				}
-				if bytes.Compare(rep, req) != 0 {
-					errs <- fmt.Errorf("reply mismatch: have %v, want %v.", rep, req)
-					done.Done()
+				} else if string(reply) != request {
+					barrier.Exit(fmt.Errorf("client invalid reply: have %v, want %v", string(reply), request))
 					return
 				}
 			}
-			// Wait till everybody else finishes
-			done.Done()
-			term.Wait()
-		}()
+			barrier.Exit(nil)
+		}(i)
 	}
-	// Wait for all go-routines to attach and verify
-	start.Wait()
-	select {
-	case err := <-errs:
-		t.Fatalf("startup failed: %v.", err)
-	default:
+	// Start up the concurrent request services
+	for i := 0; i < conf.servers; i++ {
+		go func(server int) {
+			// Create the service handler
+			handler := new(reqrepTestHandler)
+
+			// Register a new service to the relay
+			serv, err := iris.Register(config.relay, config.cluster, handler)
+			if err != nil {
+				barrier.Exit(fmt.Errorf("registration failed: %v", err))
+				return
+			}
+			defer serv.Unregister()
+			barrier.Sync()
+
+			// Request from the service cluster
+			for i := 0; i < conf.requests; i++ {
+				request := fmt.Sprintf("server #%d, request %d", server, i)
+				if reply, err := handler.conn.Request(config.cluster, []byte(request), time.Second); err != nil {
+					barrier.Exit(fmt.Errorf("server request failed: %v", err))
+					return
+				} else if string(reply) != request {
+					barrier.Exit(fmt.Errorf("server invalid reply: have %v, want %v", string(reply), request))
+					return
+				}
+			}
+			barrier.Exit(nil)
+		}(i)
 	}
-	// Permit the go-routines to continue
-	proc.Done()
-	done.Wait()
-	select {
-	case err := <-errs:
-		t.Fatalf("requesting failed: %v.", err)
-	default:
+	// Schedule the parallel operations
+	if errs := barrier.Wait(); len(errs) != 0 {
+		t.Fatalf("startup phase failed: %v.", errs)
 	}
-	// Sync up the terminations
-	term.Done()
-	kill.Wait()
+	if errs := barrier.Wait(); len(errs) != 0 {
+		t.Fatalf("request phase failed: %v.", errs)
+	}
 }
 
-// Sends a few requests to one-self, expecting error replies.
-func TestReqRepFail(t *testing.T) {
-	// Configure the test
-	requests := 1000
+// Tests request failure forwarding.
+func TestRequestFail(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		requests int
+	}{125}
 
-	// Connect to the Iris network
-	cluster := "test-reqrep-single"
-	conn, err := iris.Connect(relayPort, cluster, new(requester))
+	// Create the service handler
+	handler := new(reqrepFailTestHandler)
+
+	// Register a new service to the relay
+	serv, err := iris.Register(config.relay, config.cluster, handler)
 	if err != nil {
-		t.Fatalf("connection failed: %v.", err)
+		t.Fatalf("registration failed: %v", err)
 	}
-	defer conn.Close()
+	defer serv.Unregister()
 
-	// Send a handful of requests, verifying the replies
-	for i := 0; i < requests; i++ {
-		req := []byte("fail")
-
-		// Send request, verify failure
-		rep, err := conn.Request(cluster, req, 250*time.Millisecond)
+	// Request from the failing service cluster
+	for i := 0; i < conf.requests; i++ {
+		request := fmt.Sprintf("failure %d", i)
+		reply, err := handler.conn.Request(config.cluster, []byte(request), time.Second)
 		switch {
 		case err == nil:
-			t.Fatalf("request didn't fail: %v.", rep)
-		case err.Error() != "failed":
-			t.Fatalf("fault mismatch: have %v, want %v.", err, "failed")
+			t.Fatalf("request didn't fail: %v.", reply)
+		case err.Error() != request:
+			t.Fatalf("error message mismatch: have %v, want %v.", err, request)
 		}
 	}
 }
 
-// Benchmarks the pass-through of a single request-reply.
+// Benchmarks the latency of a single request/reply operation.
 func BenchmarkReqRepLatency(b *testing.B) {
-	// Set up the connection
-	cluster := "bench-reqrep-latency"
-	conn, err := iris.Connect(relayPort, cluster, new(requester))
+	// Create the service handler
+	handler := new(reqrepTestHandler)
+
+	// Register a new service to the relay
+	serv, err := iris.Register(config.relay, config.cluster, handler)
 	if err != nil {
-		b.Fatalf("connection failed: %v.", err)
+		b.Fatalf("registration failed: %v.", err)
 	}
-	defer conn.Close()
+	defer serv.Unregister()
 
 	// Reset timer and benchmark the message transfer
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := conn.Request(cluster, []byte{byte(i)}, 10*time.Second); err != nil {
+		if _, err := handler.conn.Request(config.cluster, []byte{byte(i)}, time.Second); err != nil {
 			b.Fatalf("request failed: %v.", err)
 		}
 	}
 }
 
-// Benchmarks parallel request-reply.
+// Benchmarks the throughput of a stream of concurrent requests.
 func BenchmarkReqRepThroughput1Threads(b *testing.B) {
 	benchmarkReqRepThroughput(1, b)
 }
@@ -237,21 +201,21 @@ func BenchmarkReqRepThroughput128Threads(b *testing.B) {
 }
 
 func benchmarkReqRepThroughput(threads int, b *testing.B) {
-	// Set up the connection
-	cluster := "bench-reqrep-throughput"
-	conn, err := iris.Connect(relayPort, cluster, new(requester))
+	// Create the service handler
+	handler := new(reqrepTestHandler)
+
+	// Register a new service to the relay
+	serv, err := iris.Register(config.relay, config.cluster, handler)
 	if err != nil {
-		b.Fatalf("connection failed: %v.", err)
+		b.Fatalf("registration failed: %v.", err)
 	}
-	defer conn.Close()
+	defer serv.Unregister()
 
 	// Create the thread pool with the concurrent requests
 	workers := pool.NewThreadPool(threads)
-	done := make(chan struct{}, b.N)
 	for i := 0; i < b.N; i++ {
 		workers.Schedule(func() {
-			defer func() { done <- struct{}{} }()
-			if _, err := conn.Request(cluster, []byte{byte(i)}, 60*time.Second); err != nil {
+			if _, err := handler.conn.Request(config.cluster, []byte{byte(i)}, 10*time.Second); err != nil {
 				b.Fatalf("request failed: %v.", err)
 			}
 		})
@@ -259,10 +223,5 @@ func benchmarkReqRepThroughput(threads int, b *testing.B) {
 	// Reset timer and benchmark the message transfer
 	b.ResetTimer()
 	workers.Start()
-	for i := 0; i < b.N; i++ {
-		<-done
-	}
-	b.StopTimer()
-	workers.Terminate(true)
+	workers.Terminate(false)
 }
-*/

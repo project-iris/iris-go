@@ -144,7 +144,7 @@ func BenchmarkBroadcastLatency(b *testing.B) {
 	// Register a new service to the relay
 	serv, err := iris.Register(config.relay, config.cluster, handler)
 	if err != nil {
-		b.Fatalf("registration failed: %v", err)
+		b.Fatalf("registration failed: %v.", err)
 	}
 	defer serv.Unregister()
 
@@ -197,7 +197,7 @@ func benchmarkBroadcastThroughput(threads int, b *testing.B) {
 	// Register a new service to the relay
 	serv, err := iris.Register(config.relay, config.cluster, handler)
 	if err != nil {
-		b.Fatalf("registration failed: %v", err)
+		b.Fatalf("registration failed: %v.", err)
 	}
 	defer serv.Unregister()
 
