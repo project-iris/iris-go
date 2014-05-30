@@ -12,9 +12,11 @@ import "sync"
 var config = struct {
 	relay   int
 	cluster string
+	topic   string
 }{
 	relay:   55555,
 	cluster: "go-binding-test-cluster",
+	topic:   "go-binding-test-topic",
 }
 
 // Simple barrier to support synchronizing a batch of goroutines.
