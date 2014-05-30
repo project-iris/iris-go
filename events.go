@@ -16,13 +16,13 @@ import (
 )
 
 // Forwards an application broadcast message to the connection handler.
-func (c *connection) handleBroadcast(message []byte) {
+func (c *Connection) handleBroadcast(message []byte) {
 	c.handler.HandleBroadcast(message)
 }
 
 // Services an application request by calling the upper layer handler and returns
 // the response or the encountered error.
-func (c *connection) handleRequest(id uint64, request []byte, timeout int) {
+func (c *Connection) handleRequest(id uint64, request []byte, timeout int) {
 	reply, fault := c.handler.HandleRequest(request)
 	if fault == nil {
 		fault = errors.New("")
@@ -33,7 +33,7 @@ func (c *connection) handleRequest(id uint64, request []byte, timeout int) {
 }
 
 // Looks up a pending request and delivers the result.
-func (c *connection) handleReply(id uint64, reply []byte, fault string) {
+func (c *Connection) handleReply(id uint64, reply []byte, fault string) {
 	c.reqLock.RLock()
 	defer c.reqLock.RUnlock()
 
@@ -47,7 +47,7 @@ func (c *connection) handleReply(id uint64, reply []byte, fault string) {
 }
 
 // Forwards a topic publish event to the subscription handler.
-func (c *connection) handlePublish(topic string, event []byte) {
+func (c *Connection) handlePublish(topic string, event []byte) {
 	// Fetch the handler and release the lock fast
 	c.subLock.RLock()
 	sub, ok := c.subLive[topic]
@@ -62,7 +62,7 @@ func (c *connection) handlePublish(topic string, event []byte) {
 }
 
 // Notifies the application of the relay link going down.
-func (c *connection) handleClose(reason error) {
+func (c *Connection) handleClose(reason error) {
 	// Notify the client of the drop if premature
 	if reason != nil {
 		c.handler.HandleDrop(reason)
@@ -77,7 +77,7 @@ func (c *connection) handleClose(reason error) {
 }
 
 // Opens a new local tunnel endpoint and binds it to the remote side.
-func (c *connection) handleTunnelInit(id uint64, chunkLimit int) {
+func (c *Connection) handleTunnelInit(id uint64, chunkLimit int) {
 	if tun, err := c.acceptTunnel(id, chunkLimit); err == nil {
 		c.handler.HandleTunnel(tun)
 	} else {
@@ -86,7 +86,7 @@ func (c *connection) handleTunnelInit(id uint64, chunkLimit int) {
 }
 
 // Forwards the tunnel construction result to the requested tunnel.
-func (c *connection) handleTunnelResult(id uint64, chunkLimit int) {
+func (c *Connection) handleTunnelResult(id uint64, chunkLimit int) {
 	// Retrieve the tunnel
 	c.tunLock.RLock()
 	tun := c.tunLive[id]
@@ -97,7 +97,7 @@ func (c *connection) handleTunnelResult(id uint64, chunkLimit int) {
 }
 
 // Forwards a tunnel data allowance to the requested tunnel.
-func (c *connection) handleTunnelAllowance(id uint64, space int) {
+func (c *Connection) handleTunnelAllowance(id uint64, space int) {
 	// Retrieve the tunnel
 	c.tunLock.RLock()
 	tun, ok := c.tunLive[id]
@@ -110,7 +110,7 @@ func (c *connection) handleTunnelAllowance(id uint64, space int) {
 }
 
 // Forwards a message chunk transfer to the requested tunnel.
-func (c *connection) handleTunnelTransfer(id uint64, size int, chunk []byte) {
+func (c *Connection) handleTunnelTransfer(id uint64, size int, chunk []byte) {
 	// Retrieve the tunnel
 	c.tunLock.RLock()
 	tun, ok := c.tunLive[id]
@@ -123,7 +123,7 @@ func (c *connection) handleTunnelTransfer(id uint64, size int, chunk []byte) {
 }
 
 // Terminates a tunnel, stopping all data transfers.
-func (c *connection) handleTunnelClose(id uint64, reason string) {
+func (c *Connection) handleTunnelClose(id uint64, reason string) {
 	c.tunLock.Lock()
 	defer c.tunLock.Unlock()
 

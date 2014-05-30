@@ -6,6 +6,7 @@
 
 package tests
 
+/*
 import (
 	"bytes"
 	"crypto/rand"
@@ -241,3 +242,4 @@ func benchmarkBroadcastThroughput(threads int, b *testing.B) {
 	b.StopTimer()
 	workers.Terminate(true)
 }
+*/

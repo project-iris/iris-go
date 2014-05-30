@@ -6,6 +6,7 @@
 
 package tests
 
+/*
 import (
 	"fmt"
 	"sync"
@@ -233,3 +234,4 @@ func BenchmarkTunnelTransferThroughput(b *testing.B) {
 	}
 	b.StopTimer()
 }
+*/

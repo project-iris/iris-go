@@ -15,10 +15,10 @@ import (
 	"time"
 )
 
-// Message relay between the local app and the local iris node.
-type connection struct {
+// Client connection to the Iris network.
+type Connection struct {
 	// Application layer fields
-	handler ConnectionHandler // Handler for connection events
+	handler ServiceHandler // Handler for connection events
 
 	reqIdx  uint64                 // Index to assign the next request
 	reqReps map[uint64]chan []byte // Reply channels for active requests
@@ -29,7 +29,7 @@ type connection struct {
 	subLock sync.RWMutex                   // Mutex to protect the subscription map
 
 	tunIdx  uint64             // Index to assign the next tunnel
-	tunLive map[uint64]*tunnel // Active tunnels
+	tunLive map[uint64]*Tunnel // Active tunnels
 	tunLock sync.RWMutex       // Mutex to protect the tunnel map
 
 	// Network layer fields
@@ -43,8 +43,20 @@ type connection struct {
 	term chan struct{}   // Channel to signal termination to blocked go-routines
 }
 
+// Callback interface for processing events from a single subscribed topic.
+type SubscriptionHandler interface {
+	// Callback invoked whenever an event is published to the topic subscribed to
+	// by this particular handler.
+	HandleEvent(event []byte)
+}
+
+// Connects to the Iris network as a simple client.
+func Connect(port int) (*Connection, error) {
+	return newConnection(port, "", nil)
+}
+
 // Connects to a local relay endpoint on port and registers as cluster.
-func newConnection(port int, cluster string, handler ConnectionHandler) (Connection, error) {
+func newConnection(port int, cluster string, handler ServiceHandler) (*Connection, error) {
 	// Connect to the iris relay node
 	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
@@ -55,14 +67,14 @@ func newConnection(port int, cluster string, handler ConnectionHandler) (Connect
 		return nil, err
 	}
 	// Create the relay object
-	conn := &connection{
+	conn := &Connection{
 		// Application layer
 		handler: handler,
 
 		reqReps: make(map[uint64]chan []byte),
 		reqErrs: make(map[uint64]chan error),
 		subLive: make(map[string]SubscriptionHandler),
-		tunLive: make(map[uint64]*tunnel),
+		tunLive: make(map[uint64]*Tunnel),
 
 		// Network layer
 		sock:    sock,
@@ -84,8 +96,11 @@ func newConnection(port int, cluster string, handler ConnectionHandler) (Connect
 	return conn, nil
 }
 
-// Implements iris.Connection.Broadcast.
-func (c *connection) Broadcast(cluster string, message []byte) error {
+// Broadcasts a message to all members of a cluster. No guarantees are made that
+// all recipients receive the message (best effort).
+//
+// The call blocks until the message is forwarded to the local Iris node.
+func (c *Connection) Broadcast(cluster string, message []byte) error {
 	// Sanity check on the arguments
 	if len(cluster) == 0 {
 		return errors.New("empty cluster identifier")
@@ -97,8 +112,11 @@ func (c *connection) Broadcast(cluster string, message []byte) error {
 	return c.sendBroadcast(cluster, message)
 }
 
-// Implements iris.Connection.Request.
-func (c *connection) Request(cluster string, request []byte, timeout time.Duration) ([]byte, error) {
+// Executes a synchronous request to be serviced by a member of the specified
+// cluster, load-balanced between all participant, returning the received reply.
+//
+// The timeout unit is in milliseconds. Anything lower will fail with an error.
+func (c *Connection) Request(cluster string, request []byte, timeout time.Duration) ([]byte, error) {
 	// Sanity check on the arguments
 	if len(cluster) == 0 {
 		return nil, errors.New("empty cluster identifier")
@@ -137,7 +155,7 @@ func (c *connection) Request(cluster string, request []byte, timeout time.Durati
 	// Retrieve the results or fail if terminating
 	select {
 	case <-c.term:
-		return nil, ErrClosing
+		return nil, ErrClosed
 	case reply := <-repc:
 		return reply, nil
 	case err := <-errc:
@@ -145,8 +163,12 @@ func (c *connection) Request(cluster string, request []byte, timeout time.Durati
 	}
 }
 
-// Implements iris.Connection.Subscribe.
-func (c *connection) Subscribe(topic string, handler SubscriptionHandler) error {
+// Subscribes to a topic, using handler as the callback for arriving events.
+//
+// The method blocks until the subscription is forwarded to the relay. There
+// might be a small delay between subscription completion and start of event
+// delivery. This is caused by subscription propagation through the network.
+func (c *Connection) Subscribe(topic string, handler SubscriptionHandler) error {
 	// Sanity check on the arguments
 	if len(topic) == 0 {
 		return errors.New("empty topic identifier")
@@ -175,8 +197,11 @@ func (c *connection) Subscribe(topic string, handler SubscriptionHandler) error 
 	return err
 }
 
-// Implements iris.Connection.Publish.
-func (c *connection) Publish(topic string, event []byte) error {
+// Publishes an event asynchronously to topic. No guarantees are made that all
+// subscribers receive the message (best effort).
+//
+// The method blocks until the message is forwarded to the local Iris node.
+func (c *Connection) Publish(topic string, event []byte) error {
 	// Sanity check on the arguments
 	if len(topic) == 0 {
 		return errors.New("empty topic identifier")
@@ -188,8 +213,10 @@ func (c *connection) Publish(topic string, event []byte) error {
 	return c.sendPublish(topic, event)
 }
 
-// Implements iris.Connection.Unsubscribe.
-func (c *connection) Unsubscribe(topic string) error {
+// Unsubscribes from topic, receiving no more event notifications for it.
+//
+// The method blocks until the unsubscription is forwarded to the local Iris node.
+func (c *Connection) Unsubscribe(topic string) error {
 	// Sanity check on the arguments
 	if len(topic) == 0 {
 		return errors.New("empty topic identifier")
@@ -208,8 +235,14 @@ func (c *connection) Unsubscribe(topic string) error {
 	return err
 }
 
-// Implements iris.Connection.Tunnel.
-func (c *connection) Tunnel(cluster string, timeout time.Duration) (Tunnel, error) {
+// Opens a direct tunnel to a member of a remote cluster, allowing pairwise-
+// exclusive, order-guaranteed and throttled message passing between them.
+//
+// The method blocks until the newly created tunnel is set up, or the time
+// limit is reached.
+//
+// The timeout unit is in milliseconds. Anything lower will fail with an error.
+func (c *Connection) Tunnel(cluster string, timeout time.Duration) (*Tunnel, error) {
 	// Sanity check on the arguments
 	if len(cluster) == 0 {
 		return nil, errors.New("empty cluster identifier")
@@ -222,8 +255,11 @@ func (c *connection) Tunnel(cluster string, timeout time.Duration) (Tunnel, erro
 	return c.initTunnel(cluster, timeoutms)
 }
 
-// Implements iris.Connection.Close.
-func (c *connection) Close() error {
+// Gracefully terminates the connection removing all subscriptions and closing
+// all active tunnels.
+//
+// The call blocks until the connection tear-down is confirmed by the Iris node.
+func (c *Connection) Close() error {
 	// Send a graceful close to the relay node
 	if err := c.sendClose(); err != nil {
 		return err

@@ -45,12 +45,12 @@ var (
 )
 
 // Serializes a single byte into the relay connection.
-func (c *connection) sendByte(data byte) error {
+func (c *Connection) sendByte(data byte) error {
 	return c.sockBuf.WriteByte(data)
 }
 
 // Serializes a boolean into the relay connection.
-func (c *connection) sendBool(data bool) error {
+func (c *Connection) sendBool(data bool) error {
 	if data {
 		return c.sendByte(1)
 	}
@@ -58,7 +58,7 @@ func (c *connection) sendBool(data bool) error {
 }
 
 // Serializes a variable int into the relay using base 128 encoding into the relay connection.
-func (c *connection) sendVarint(data uint64) error {
+func (c *Connection) sendVarint(data uint64) error {
 	for data > 127 {
 		// Internal byte, set the continuation flag and send
 		if err := c.sendByte(byte(128 + data%128)); err != nil {
@@ -71,7 +71,7 @@ func (c *connection) sendVarint(data uint64) error {
 }
 
 // Serializes a length-tagged binary array into the relay connection.
-func (c *connection) sendBinary(data []byte) error {
+func (c *Connection) sendBinary(data []byte) error {
 	if err := c.sendVarint(uint64(len(data))); err != nil {
 		return err
 	}
@@ -82,12 +82,12 @@ func (c *connection) sendBinary(data []byte) error {
 }
 
 // Serializes a length-tagged string into the relay connection.
-func (c *connection) sendString(data string) error {
+func (c *Connection) sendString(data string) error {
 	return c.sendBinary([]byte(data))
 }
 
 // Sends a connection initiation.
-func (c *connection) sendInit(cluster string) error {
+func (c *Connection) sendInit(cluster string) error {
 	if err := c.sendByte(opInit); err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func (c *connection) sendInit(cluster string) error {
 }
 
 // Sends a connection tear-down initiation.
-func (c *connection) sendClose() error {
+func (c *Connection) sendClose() error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -115,7 +115,7 @@ func (c *connection) sendClose() error {
 }
 
 // Sends an application broadcast initiation.
-func (c *connection) sendBroadcast(cluster string, message []byte) error {
+func (c *Connection) sendBroadcast(cluster string, message []byte) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -132,7 +132,7 @@ func (c *connection) sendBroadcast(cluster string, message []byte) error {
 }
 
 // Sends an application request initiation.
-func (c *connection) sendRequest(id uint64, cluster string, request []byte, timeout int) error {
+func (c *Connection) sendRequest(id uint64, cluster string, request []byte, timeout int) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -155,7 +155,7 @@ func (c *connection) sendRequest(id uint64, cluster string, request []byte, time
 }
 
 // Sends an application reply initiation.
-func (c *connection) sendReply(id uint64, reply []byte, fault string) error {
+func (c *Connection) sendReply(id uint64, reply []byte, fault string) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -182,7 +182,7 @@ func (c *connection) sendReply(id uint64, reply []byte, fault string) error {
 }
 
 // Sends a topic subscription.
-func (c *connection) sendSubscribe(topic string) error {
+func (c *Connection) sendSubscribe(topic string) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -196,7 +196,7 @@ func (c *connection) sendSubscribe(topic string) error {
 }
 
 // Sends a topic subscription removal.
-func (c *connection) sendUnsubscribe(topic string) error {
+func (c *Connection) sendUnsubscribe(topic string) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -210,7 +210,7 @@ func (c *connection) sendUnsubscribe(topic string) error {
 }
 
 // Sends a topic event publish.
-func (c *connection) sendPublish(topic string, event []byte) error {
+func (c *Connection) sendPublish(topic string, event []byte) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -227,7 +227,7 @@ func (c *connection) sendPublish(topic string, event []byte) error {
 }
 
 // Sends a tunnel construction request.
-func (c *connection) sendTunnelInit(id uint64, cluster string, timeout int) error {
+func (c *Connection) sendTunnelInit(id uint64, cluster string, timeout int) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -247,7 +247,7 @@ func (c *connection) sendTunnelInit(id uint64, cluster string, timeout int) erro
 }
 
 // Sends a tunnel confirmation.
-func (c *connection) sendTunnelConfirm(buildId, tunId uint64) error {
+func (c *Connection) sendTunnelConfirm(buildId, tunId uint64) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -264,7 +264,7 @@ func (c *connection) sendTunnelConfirm(buildId, tunId uint64) error {
 }
 
 // Sends a tunnel transfer allowance.
-func (c *connection) sendTunnelAllowance(id uint64, space int) error {
+func (c *Connection) sendTunnelAllowance(id uint64, space int) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -281,7 +281,7 @@ func (c *connection) sendTunnelAllowance(id uint64, space int) error {
 }
 
 // Sends a tunnel data exchange.
-func (c *connection) sendTunnelTransfer(id uint64, first bool, payload []byte) error {
+func (c *Connection) sendTunnelTransfer(id uint64, first bool, payload []byte) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -305,7 +305,7 @@ func (c *connection) sendTunnelTransfer(id uint64, first bool, payload []byte) e
 }
 
 // Sends a tunnel termination request.
-func (c *connection) sendTunnelClose(id uint64) error {
+func (c *Connection) sendTunnelClose(id uint64) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -319,12 +319,12 @@ func (c *connection) sendTunnelClose(id uint64) error {
 }
 
 // Retrieves a single byte from the relay connection.
-func (c *connection) recvByte() (byte, error) {
+func (c *Connection) recvByte() (byte, error) {
 	return c.sockBuf.ReadByte()
 }
 
 // Retrieves a boolean from the relay connection.
-func (c *connection) recvBool() (bool, error) {
+func (c *Connection) recvBool() (bool, error) {
 	b, err := c.recvByte()
 	if err != nil {
 		return false, err
@@ -340,7 +340,7 @@ func (c *connection) recvBool() (bool, error) {
 }
 
 // Retrieves a variable int from the relay in base 128 encoding from the relay connection.
-func (c *connection) recvVarint() (uint64, error) {
+func (c *Connection) recvVarint() (uint64, error) {
 	var num uint64
 	for i := uint(0); ; i++ {
 		chunk, err := c.recvByte()
@@ -356,7 +356,7 @@ func (c *connection) recvVarint() (uint64, error) {
 }
 
 // Retrieves a length-tagged binary array from the relay connection.
-func (c *connection) recvBinary() ([]byte, error) {
+func (c *Connection) recvBinary() ([]byte, error) {
 	// Fetch the length of the binary blob
 	size, err := c.recvVarint()
 	if err != nil {
@@ -371,7 +371,7 @@ func (c *connection) recvBinary() ([]byte, error) {
 }
 
 // Retrieves a length-tagged string from the relay connection.
-func (c *connection) recvString() (string, error) {
+func (c *Connection) recvString() (string, error) {
 	if data, err := c.recvBinary(); err != nil {
 		return "", err
 	} else {
@@ -380,7 +380,7 @@ func (c *connection) recvString() (string, error) {
 }
 
 // Retrieves a connection initiation response (either accept or deny).
-func (c *connection) procInit() (string, error) {
+func (c *Connection) procInit() (string, error) {
 	// Retrieve the response opcode
 	op, err := c.recvByte()
 	if err != nil {
@@ -419,12 +419,12 @@ func (c *connection) procInit() (string, error) {
 }
 
 // Retrieves a connection tear-down notification.
-func (c *connection) procClose() (string, error) {
+func (c *Connection) procClose() (string, error) {
 	return c.recvString()
 }
 
 // Retrieves an application broadcast delivery.
-func (c *connection) procBroadcast() error {
+func (c *Connection) procBroadcast() error {
 	message, err := c.recvBinary()
 	if err != nil {
 		return err
@@ -434,7 +434,7 @@ func (c *connection) procBroadcast() error {
 }
 
 // Retrieves an application request delivery.
-func (c *connection) procRequest() error {
+func (c *Connection) procRequest() error {
 	id, err := c.recvVarint()
 	if err != nil {
 		return err
@@ -452,7 +452,7 @@ func (c *connection) procRequest() error {
 }
 
 // Retrieves an application reply delivery.
-func (c *connection) procReply() error {
+func (c *Connection) procReply() error {
 	id, err := c.recvVarint()
 	if err != nil {
 		return err
@@ -487,7 +487,7 @@ func (c *connection) procReply() error {
 }
 
 // Retrieves a topic event delivery.
-func (c *connection) procPublish() error {
+func (c *Connection) procPublish() error {
 	topic, err := c.recvString()
 	if err != nil {
 		return err
@@ -501,7 +501,7 @@ func (c *connection) procPublish() error {
 }
 
 // Retrieves a tunnel initiation message.
-func (c *connection) procTunnelInit() error {
+func (c *Connection) procTunnelInit() error {
 	id, err := c.recvVarint()
 	if err != nil {
 		return err
@@ -515,7 +515,7 @@ func (c *connection) procTunnelInit() error {
 }
 
 // Retrieves a tunnel construction result.
-func (c *connection) procTunnelResult() error {
+func (c *Connection) procTunnelResult() error {
 	id, err := c.recvVarint()
 	if err != nil {
 		return err
@@ -538,7 +538,7 @@ func (c *connection) procTunnelResult() error {
 }
 
 // Retrieves a tunnel transfer allowance message.
-func (c *connection) procTunnelAllowance() error {
+func (c *Connection) procTunnelAllowance() error {
 	id, err := c.recvVarint()
 	if err != nil {
 		return err
@@ -552,7 +552,7 @@ func (c *connection) procTunnelAllowance() error {
 }
 
 // Retrieves a tunnel data exchange message.
-func (c *connection) procTunnelTransfer() error {
+func (c *Connection) procTunnelTransfer() error {
 	id, err := c.recvVarint()
 	if err != nil {
 		return err
@@ -570,7 +570,7 @@ func (c *connection) procTunnelTransfer() error {
 }
 
 // Retrieves a tunnel closure notification.
-func (c *connection) procTunnelClose() error {
+func (c *Connection) procTunnelClose() error {
 	id, err := c.recvVarint()
 	if err != nil {
 		return err
@@ -585,7 +585,7 @@ func (c *connection) procTunnelClose() error {
 
 // Retrieves messages from the client connection and keeps processing them until
 // either the relay closes (graceful close) or the connection drops.
-func (c *connection) process() {
+func (c *Connection) process() {
 	var op byte
 	var err error
 	for closed := false; !closed && err == nil; {

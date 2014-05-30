@@ -19,10 +19,12 @@ import (
 // Iris to app buffer size for flow control.
 var tunnelBuffer = 2 * 1024 * 1024 // 2MB
 
-// Ordered message stream between two endpoints.
-type tunnel struct {
+// Communication stream between the local application and a remote endpoint. The
+// ordered delivery of messages is guaranteed and the message flow between the
+// peers is throttled.
+type Tunnel struct {
 	id   uint64      // Tunnel identifier for de/multiplexing
-	conn *connection // Connection to the local relay
+	conn *Connection // Connection to the local relay
 
 	// Chunking fields
 	chunkLimit int    // Maximum length of a data payload
@@ -43,7 +45,7 @@ type tunnel struct {
 	stat error         // Failure reason, if any received
 }
 
-func (c *connection) newTunnel() (*tunnel, error) {
+func (c *Connection) newTunnel() (*Tunnel, error) {
 	c.tunLock.Lock()
 	defer c.tunLock.Unlock()
 
@@ -56,7 +58,7 @@ func (c *connection) newTunnel() (*tunnel, error) {
 	c.tunIdx++
 
 	// Assemble and store the live tunnel
-	tun := &tunnel{
+	tun := &Tunnel{
 		id:   tunId,
 		conn: c,
 
@@ -73,7 +75,7 @@ func (c *connection) newTunnel() (*tunnel, error) {
 }
 
 // Initiates a new tunnel to a remote cluster.
-func (c *connection) initTunnel(cluster string, timeout int) (Tunnel, error) {
+func (c *Connection) initTunnel(cluster string, timeout int) (*Tunnel, error) {
 	// Create a potential tunnel
 	tun, err := c.newTunnel()
 	if err != nil {
@@ -94,7 +96,7 @@ func (c *connection) initTunnel(cluster string, timeout int) (Tunnel, error) {
 				err = ErrTimeout
 			}
 		case <-c.term:
-			err = ErrClosing
+			err = ErrClosed
 		}
 	}
 	// Clean up and return the failure
@@ -106,7 +108,7 @@ func (c *connection) initTunnel(cluster string, timeout int) (Tunnel, error) {
 }
 
 // Accepts an incoming tunneling request and confirms its local id.
-func (c *connection) acceptTunnel(initId uint64, chunkLimit int) (Tunnel, error) {
+func (c *Connection) acceptTunnel(initId uint64, chunkLimit int) (*Tunnel, error) {
 	// Create the local tunnel endpoint
 	tun, err := c.newTunnel()
 	if err != nil {
@@ -131,8 +133,11 @@ func (c *connection) acceptTunnel(initId uint64, chunkLimit int) (Tunnel, error)
 	return tun, nil
 }
 
-// Implements iris.Tunnel.Send.
-func (t *tunnel) Send(message []byte, timeout time.Duration) error {
+// Sends a message over the tunnel to the remote pair, blocking until the local
+// Iris node receives the message or the operation times out.
+//
+// Infinite blocking is supported with by setting the timeout to zero (0).
+func (t *Tunnel) Send(message []byte, timeout time.Duration) error {
 	// Sanity check on the arguments
 	if message == nil {
 		return errors.New("nil message")
@@ -156,7 +161,7 @@ func (t *tunnel) Send(message []byte, timeout time.Duration) error {
 }
 
 // Sends a single message chunk to the remote endpoint.
-func (t *tunnel) sendChunk(chunk []byte, first bool, deadline <-chan time.Time) error {
+func (t *Tunnel) sendChunk(chunk []byte, first bool, deadline <-chan time.Time) error {
 	for {
 		// Short circuit if there's enough space allowance already
 		if t.drainAllowance(len(chunk)) {
@@ -165,7 +170,7 @@ func (t *tunnel) sendChunk(chunk []byte, first bool, deadline <-chan time.Time) 
 		// Query for a send allowance
 		select {
 		case <-t.term:
-			return ErrClosing
+			return ErrClosed
 		case <-deadline:
 			return ErrTimeout
 		case <-t.atoiSign:
@@ -177,7 +182,7 @@ func (t *tunnel) sendChunk(chunk []byte, first bool, deadline <-chan time.Time) 
 
 // Checks whether there is enough space allowance available to send a message.
 // If yes, the allowance is reduced accordingly.
-func (t *tunnel) drainAllowance(need int) bool {
+func (t *Tunnel) drainAllowance(need int) bool {
 	t.atoiLock.Lock()
 	defer t.atoiLock.Unlock()
 
@@ -193,8 +198,11 @@ func (t *tunnel) drainAllowance(need int) bool {
 	return false
 }
 
-// Implements iris.Tunnel.Recv.
-func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
+// Retrieves a message from the tunnel, blocking until one is available or the
+// operation times out.
+//
+// Infinite blocking is supported with by setting the timeout to zero (0).
+func (t *Tunnel) Recv(timeout time.Duration) ([]byte, error) {
 	// Short circuit if there's a message already buffered
 	if msg := t.fetchMessage(); msg != nil {
 		return msg, nil
@@ -207,7 +215,7 @@ func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
 	// Wait for a message to arrive
 	select {
 	case <-t.term:
-		return nil, ErrClosing
+		return nil, ErrClosed
 	case <-after:
 		return nil, ErrTimeout
 	case <-t.itoaSign:
@@ -220,7 +228,7 @@ func (t *tunnel) Recv(timeout time.Duration) ([]byte, error) {
 
 // Fetches the next buffered message, or nil if none is available. If a message
 // was available, grants the remote side the space allowance just consumed.
-func (t *tunnel) fetchMessage() []byte {
+func (t *Tunnel) fetchMessage() []byte {
 	t.itoaLock.Lock()
 	defer t.itoaLock.Unlock()
 
@@ -237,8 +245,11 @@ func (t *tunnel) fetchMessage() []byte {
 	return nil
 }
 
-// Implements iris.Tunnel.Close.
-func (t *tunnel) Close() error {
+// Closes the tunnel between the pair. Any blocked read and write operation will
+// terminate with a failure.
+//
+// The method blocks until the local relay node acknowledges the tear-down.
+func (t *Tunnel) Close() error {
 	// Short circuit if remote end already closed
 	select {
 	case <-t.term:
@@ -254,7 +265,7 @@ func (t *tunnel) Close() error {
 }
 
 // Finalizes the tunnel construction.
-func (t *tunnel) handleInitResult(chunkLimit int) {
+func (t *Tunnel) handleInitResult(chunkLimit int) {
 	if chunkLimit > 0 {
 		t.chunkLimit = chunkLimit
 	}
@@ -262,7 +273,7 @@ func (t *tunnel) handleInitResult(chunkLimit int) {
 }
 
 // Increases the available data allowance of the remote endpoint.
-func (t *tunnel) handleAllowance(space int) {
+func (t *Tunnel) handleAllowance(space int) {
 	t.atoiLock.Lock()
 	defer t.atoiLock.Unlock()
 
@@ -275,7 +286,7 @@ func (t *tunnel) handleAllowance(space int) {
 
 // Adds the chunk to the currently building message and delivers it upon
 // completion. If a new message starts, the old is discarded.
-func (t *tunnel) handleTransfer(size int, chunk []byte) {
+func (t *Tunnel) handleTransfer(size int, chunk []byte) {
 	// If a new message is arriving, dump anything stored before
 	if size != 0 {
 		if t.chunkBuf != nil {
@@ -300,7 +311,7 @@ func (t *tunnel) handleTransfer(size int, chunk []byte) {
 }
 
 // Handles the graceful remote closure of the tunnel.
-func (t *tunnel) handleClose(reason string) {
+func (t *Tunnel) handleClose(reason string) {
 	if reason != "" {
 		t.stat = fmt.Errorf("remote error: %s", reason)
 	}
