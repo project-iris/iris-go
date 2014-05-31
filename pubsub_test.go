@@ -116,7 +116,7 @@ func TestPublish(t *testing.T) {
 			handler := new(pubsubTestServiceHandler)
 
 			// Register a new service to the relay
-			serv, err := Register(config.relay, config.cluster, handler)
+			serv, err := Register(config.relay, config.cluster, handler, nil)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return

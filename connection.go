@@ -13,6 +13,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/project-iris/iris/pool"
 )
 
 // Client connection to the Iris network.
@@ -31,6 +33,12 @@ type Connection struct {
 	tunIdx  uint64             // Index to assign the next tunnel
 	tunLive map[uint64]*Tunnel // Active tunnels
 	tunLock sync.RWMutex       // Mutex to protect the tunnel map
+
+	// Quality of service fields
+	limits *ServiceLimits // Limits on the inbound message processing
+
+	bcastPool *pool.ThreadPool // Queue and concurrency limiter for the broadcast handlers
+	bcastUsed int32            // Actual memory usage of the broadcast queue
 
 	// Network layer fields
 	sock     net.Conn          // Network connection to the iris node
@@ -52,11 +60,13 @@ type SubscriptionHandler interface {
 
 // Connects to the Iris network as a simple client.
 func Connect(port int) (*Connection, error) {
-	return newConnection(port, "", nil)
+	return newConnection(port, "", nil, nil)
 }
 
 // Connects to a local relay endpoint on port and registers as cluster.
-func newConnection(port int, cluster string, handler ServiceHandler) (*Connection, error) {
+func newConnection(port int, cluster string, handler ServiceHandler, limits *ServiceLimits) (*Connection, error) {
+	limits = finalizeLimits(limits)
+
 	// Connect to the iris relay node
 	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
@@ -76,6 +86,11 @@ func newConnection(port int, cluster string, handler ServiceHandler) (*Connectio
 		subLive: make(map[string]SubscriptionHandler),
 		tunLive: make(map[uint64]*Tunnel),
 
+		// Quality of service
+		limits: limits,
+
+		bcastPool: pool.NewThreadPool(limits.BroadcastThreads),
+
 		// Network layer
 		sock:    sock,
 		sockBuf: bufio.NewReadWriter(bufio.NewReader(sock), bufio.NewWriter(sock)),
@@ -91,9 +106,28 @@ func newConnection(port int, cluster string, handler ServiceHandler) (*Connectio
 	if _, err := conn.procInit(); err != nil {
 		return nil, err
 	}
-	// All ok, start processing messages and return
+	// Start the network receiver and return
 	go conn.process()
 	return conn, nil
+}
+
+// Merges the user requested limits with the defaults.
+func finalizeLimits(user *ServiceLimits) *ServiceLimits {
+	// If the user didn't specify anything, load the full default set
+	if user == nil {
+		return &defaultServiceLimits
+	}
+	// Check each field and merge only non-specified ones
+	limits := new(ServiceLimits)
+	*limits = *user
+
+	if user.BroadcastThreads == 0 {
+		limits.BroadcastThreads = defaultServiceLimits.BroadcastThreads
+	}
+	if user.BroadcastMemory == 0 {
+		limits.BroadcastMemory = defaultServiceLimits.BroadcastMemory
+	}
+	return limits
 }
 
 // Broadcasts a message to all members of a cluster. No guarantees are made that

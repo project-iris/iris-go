@@ -77,7 +77,7 @@ func TestBroadcast(t *testing.T) {
 				delivers: make(chan []byte, (conf.clients+conf.servers)*conf.messages),
 			}
 			// Register a new service to the relay
-			serv, err := Register(config.relay, config.cluster, handler)
+			serv, err := Register(config.relay, config.cluster, handler, nil)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -144,6 +144,106 @@ func TestBroadcast(t *testing.T) {
 	shutdown.Wait()
 }
 
+// Service handler for the broadcast limit tests.
+type broadcastLimitTestHandler struct {
+	conn     *Connection
+	delivers chan []byte
+	sleep    time.Duration
+}
+
+func (b *broadcastLimitTestHandler) Init(conn *Connection) error          { b.conn = conn; return nil }
+func (b *broadcastLimitTestHandler) HandleRequest([]byte) ([]byte, error) { panic("not implemented") }
+func (b *broadcastLimitTestHandler) HandleTunnel(tun *Tunnel)             { panic("not implemented") }
+func (b *broadcastLimitTestHandler) HandleDrop(reason error)              { panic("not implemented") }
+
+func (b *broadcastLimitTestHandler) HandleBroadcast(msg []byte) {
+	time.Sleep(b.sleep)
+	b.delivers <- msg
+}
+
+// Tests the broadcast thread limitation.
+func TestBroadcastThreadLimit(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		messages int
+		sleep    time.Duration
+	}{4, 100 * time.Millisecond}
+
+	// Create the service handler and limiter
+	handler := &broadcastLimitTestHandler{
+		delivers: make(chan []byte, conf.messages),
+		sleep:    conf.sleep,
+	}
+	limits := &ServiceLimits{BroadcastThreads: 1}
+
+	// Register a new service to the relay
+	serv, err := Register(config.relay, config.cluster, handler, limits)
+	if err != nil {
+		t.Fatalf("registration failed: %v.", err)
+	}
+	defer serv.Unregister()
+
+	// Send a few broadcasts
+	for i := 0; i < conf.messages; i++ {
+		if err := handler.conn.Broadcast(config.cluster, []byte{byte(i)}); err != nil {
+			t.Fatalf("broadcast failed: %v.", err)
+		}
+	}
+	// Wait for half time and verify that only half was processed
+	time.Sleep(time.Duration(conf.messages/2)*conf.sleep + conf.sleep/2)
+	for i := 0; i < conf.messages/2; i++ {
+		select {
+		case <-handler.delivers:
+		default:
+			t.Errorf("broadcast #%d not received", i)
+		}
+	}
+	select {
+	case <-handler.delivers:
+		t.Errorf("additional broadcast received")
+	default:
+	}
+}
+
+// Tests the broadcast memory limitation.
+func TestBroadcastMemoryLimit(t *testing.T) {
+	// Create the service handler and limiter
+	handler := &broadcastTestHandler{
+		delivers: make(chan []byte, 1),
+	}
+	limits := &ServiceLimits{
+		BroadcastThreads: 1,
+		BroadcastMemory:  1,
+	}
+	// Register a new service to the relay
+	serv, err := Register(config.relay, config.cluster, handler, limits)
+	if err != nil {
+		t.Fatalf("registration failed: %v.", err)
+	}
+	defer serv.Unregister()
+
+	// Check that a 1 byte broadcast passes
+	if err := handler.conn.Broadcast(config.cluster, []byte{0x00}); err != nil {
+		t.Fatalf("small broadcast failed: %v.", err)
+	}
+	time.Sleep(time.Millisecond)
+	select {
+	case <-handler.delivers:
+	default:
+		t.Fatalf("small broadcast not received.")
+	}
+	// Check that a 2 byte broadcast is dropped
+	if err := handler.conn.Broadcast(config.cluster, []byte{0x00, 0x00}); err != nil {
+		t.Fatalf("large broadcast failed: %v.", err)
+	}
+	time.Sleep(time.Millisecond)
+	select {
+	case <-handler.delivers:
+		t.Fatalf("large broadcast received.")
+	default:
+	}
+}
+
 // Benchmarks broadcasting a single message.
 func BenchmarkBroadcastLatency(b *testing.B) {
 	// Create the service handler
@@ -151,7 +251,7 @@ func BenchmarkBroadcastLatency(b *testing.B) {
 		delivers: make(chan []byte, b.N),
 	}
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}
@@ -206,7 +306,7 @@ func benchmarkBroadcastThroughput(threads int, b *testing.B) {
 		delivers: make(chan []byte, b.N),
 	}
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}

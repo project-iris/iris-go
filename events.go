@@ -4,20 +4,31 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-// Event handlers for relay side messages. Almost all methods in this file are
-// assumed to be running in a separate go routine! The only exception is the
-// tunnel data handler which requires strict order.
+// Event handlers for relay side messages.
 
 package iris
 
 import (
 	"errors"
 	"log"
+	"sync/atomic"
 )
 
-// Forwards an application broadcast message to the connection handler.
+// Schedules an application broadcast message for the service handler to process.
 func (c *Connection) handleBroadcast(message []byte) {
-	c.handler.HandleBroadcast(message)
+	// Make sure there is enough memory for the message
+	if int(atomic.LoadInt32(&c.bcastUsed))+len(message) <= c.limits.BroadcastMemory {
+		// Increment the memory usage of the queue and schedule the broadcast
+		atomic.AddInt32(&c.bcastUsed, int32(len(message)))
+		c.bcastPool.Schedule(func() {
+			// Start the processing by decrementing the memory usage
+			atomic.AddInt32(&c.bcastUsed, -int32(len(message)))
+			c.handler.HandleBroadcast(message)
+		})
+		return
+	}
+	// Not enough memory in the broadcast queue
+	log.Printf("memory allowance exceeded, broadcast dropped.")
 }
 
 // Services an application request by calling the upper layer handler and returns

@@ -68,7 +68,7 @@ func TestRegister(t *testing.T) {
 	for i := 0; i < conf.services; i++ {
 		go func() {
 			// Register a new service to the relay
-			serv, err := Register(config.relay, config.cluster, new(registerTestHandler))
+			serv, err := Register(config.relay, config.cluster, new(registerTestHandler), nil)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -108,7 +108,7 @@ func BenchmarkConnect(b *testing.B) {
 // Benchmarks service registration.
 func BenchmarkRegister(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if serv, err := Register(config.relay, config.cluster, new(registerTestHandler)); err != nil {
+		if serv, err := Register(config.relay, config.cluster, new(registerTestHandler), nil); err != nil {
 			b.Fatalf("iteration %d: register failed: %v.", i, err)
 		} else {
 			defer serv.Unregister()

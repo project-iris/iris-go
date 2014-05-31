@@ -92,7 +92,7 @@ func TestRequest(t *testing.T) {
 			handler := new(reqrepTestHandler)
 
 			// Register a new service to the relay
-			serv, err := Register(config.relay, config.cluster, handler)
+			serv, err := Register(config.relay, config.cluster, handler, nil)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -136,7 +136,7 @@ func TestRequestFail(t *testing.T) {
 	handler := new(reqrepFailTestHandler)
 
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		t.Fatalf("registration failed: %v", err)
 	}
@@ -161,7 +161,7 @@ func BenchmarkRequestLatency(b *testing.B) {
 	handler := new(reqrepTestHandler)
 
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}
@@ -216,7 +216,7 @@ func benchmarkRequestThroughput(threads int, b *testing.B) {
 	handler := new(reqrepTestHandler)
 
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}

@@ -425,7 +425,7 @@ func (c *Connection) procBroadcast() error {
 	if err != nil {
 		return err
 	}
-	go c.handleBroadcast(message)
+	c.handleBroadcast(message)
 	return nil
 }
 

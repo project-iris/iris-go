@@ -47,7 +47,7 @@ type Service struct {
 
 // Connects to the Iris network and registers a new service instance as a member
 // of the specified service cluster.
-func Register(port int, cluster string, handler ServiceHandler) (*Service, error) {
+func Register(port int, cluster string, handler ServiceHandler, limits *ServiceLimits) (*Service, error) {
 	// Sanity check on the arguments
 	if len(cluster) == 0 {
 		return nil, errors.New("empty cluster identifier")
@@ -56,7 +56,7 @@ func Register(port int, cluster string, handler ServiceHandler) (*Service, error
 		return nil, errors.New("nil service handler")
 	}
 	// Connect to the Iris relay as a service
-	conn, err := newConnection(port, cluster, handler)
+	conn, err := newConnection(port, cluster, handler, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -69,11 +69,20 @@ func Register(port int, cluster string, handler ServiceHandler) (*Service, error
 		conn.Close()
 		return nil, err
 	}
-	// All ok, return the service instance
+	// Start the handler pools
+	conn.bcastPool.Start()
+
 	return serv, nil
 }
 
 // Unregisters the service instance from the Iris network.
 func (s *Service) Unregister() error {
-	return s.conn.Close()
+	// Tear-down the connection
+	err := s.conn.Close()
+
+	// Stop all the thread pools
+	s.conn.bcastPool.Terminate(true)
+
+	// Return the result of the connection close
+	return err
 }

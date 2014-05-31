@@ -89,7 +89,7 @@ func TestTunnel(t *testing.T) {
 			handler := new(tunnelTestHandler)
 
 			// Register a new service to the relay
-			serv, err := Register(config.relay, config.cluster, handler)
+			serv, err := Register(config.relay, config.cluster, handler, nil)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -166,7 +166,7 @@ func TestTunnelChunking(t *testing.T) {
 	handler := new(tunnelTestHandler)
 
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		t.Fatalf("registration failed: %v.", err)
 	}
@@ -204,7 +204,7 @@ func TestTunnelOverload(t *testing.T) {
 	handler := new(tunnelTestHandler)
 
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		t.Fatalf("registration failed: %v.", err)
 	}
@@ -248,7 +248,7 @@ func BenchmarkTunnelLatency(b *testing.B) {
 	handler := new(tunnelTestHandler)
 
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}
@@ -282,7 +282,7 @@ func BenchmarkTunnelThroughput(b *testing.B) {
 	handler := new(tunnelTestHandler)
 
 	// Register a new service to the relay
-	serv, err := Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler, nil)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}
