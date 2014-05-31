@@ -6,232 +6,219 @@
 
 package tests
 
-/*
 import (
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
 	"gopkg.in/project-iris/iris-go.v0"
 )
 
-// Connection handler for the tunnel tests.
-type tunneler struct {
+// Service handler for the tunnel tests.
+type tunnelTestHandler struct {
+	conn *iris.Connection
 }
 
-func (t *tunneler) HandleBroadcast(msg []byte) {
-	panic("Broadcast passed to tunnel handler")
-}
+func (t *tunnelTestHandler) Init(conn *iris.Connection) error         { t.conn = conn; return nil }
+func (t *tunnelTestHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
+func (t *tunnelTestHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
+func (t *tunnelTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
 
-func (t *tunneler) HandleRequest(req []byte) ([]byte, error) {
-	panic("Request passed to tunnel handler")
-}
-
-func (t *tunneler) HandleTunnel(tun iris.Tunnel) {
+func (t *tunnelTestHandler) HandleTunnel(tun *iris.Tunnel) {
 	defer tun.Close()
-	for done := false; !done; {
-		if msg, err := tun.Recv(0); err == nil {
+
+	for {
+		msg, err := tun.Recv(0)
+		switch {
+		case err == iris.ErrClosed:
+			return
+		case err == nil:
 			if err := tun.Send(msg, 0); err != nil {
-				panic(err)
+				panic(fmt.Sprintf("tunnel send failed: %v", err))
 			}
-		} else {
-			done = true
+		default:
+			panic(fmt.Sprintf("tunnel receive failed: %v", err))
 		}
 	}
 }
 
-func (t *tunneler) HandleDrop(reason error) {
-	panic("Connection dropped on tunnel handler")
-}
+// Tests multiple concurrent client and service tunnels.
+func TestTunnel(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		clients   int
+		servers   int
+		tunnels   int
+		exchanges int
+	}{7, 7, 7, 7}
 
-// Opens a tunnel to itself and streams a batch of messages.
-func TestTunnelSingle(t *testing.T) {
-	// Configure the test
-	messages := 1000
+	barrier := newBarrier(conf.clients + conf.servers)
 
-	// Connect to the Iris network
-	cluster := "test-tunnel-single"
-	conn, err := iris.Connect(relayPort, cluster, new(tunneler))
-	if err != nil {
-		t.Fatalf("connection failed: %v.", err)
-	}
-	defer conn.Close()
-
-	// Open a tunnel to self
-	tun, err := conn.Tunnel(cluster, 250*time.Millisecond)
-	if err != nil {
-		t.Fatalf("tunneling failed: %v.", err)
-	}
-	defer tun.Close()
-
-	// Serialize a load of messages
-	for i := 0; i < messages; i++ {
-		if err := tun.Send([]byte(fmt.Sprintf("%d", i)), 250*time.Millisecond); err != nil {
-			t.Fatalf("send failed: %v.", err)
-		}
-	}
-	// Read back the echo stream and verify
-	for i := 0; i < messages; i++ {
-		if msg, err := tun.Recv(250 * time.Millisecond); err != nil {
-			t.Fatalf("receive failed: %v.", err)
-		} else {
-			if res := fmt.Sprintf("%d", i); res != string(msg) {
-				t.Fatalf("message mismatch: have %v, want %v.", msg, string(res))
-			}
-		}
-	}
-}
-
-// Starts a batch of servers, each sending and echoing a stream of messages.
-func TestTunnelMulti(t *testing.T) {
-	// Configure the test
-	servers := 75
-	messages := 50
-
-	start := new(sync.WaitGroup)
-	proc := new(sync.WaitGroup)
-	proc.Add(1)
-	done := new(sync.WaitGroup)
-	term := new(sync.WaitGroup)
-	term.Add(1)
-	kill := new(sync.WaitGroup)
-
-	// Start up the concurrent tunnelers
-	errs := make(chan error, servers)
-	for i := 0; i < servers; i++ {
-		start.Add(1)
-		done.Add(1)
-		kill.Add(1)
-		go func() {
-			defer kill.Done()
-
-			// Connect to the relay
-			cluster := "test-tunnel-multi"
-			conn, err := iris.Connect(relayPort, cluster, new(tunneler))
+	// Start up the concurrent tunneling clients
+	for i := 0; i < conf.clients; i++ {
+		go func(client int) {
+			// Connect to the local relay
+			conn, err := iris.Connect(config.relay)
 			if err != nil {
-				errs <- fmt.Errorf("connection failed: %v", err)
-				start.Done()
+				barrier.Exit(fmt.Errorf("connection failed: %v", err))
 				return
 			}
 			defer conn.Close()
+			barrier.Sync()
 
-			// Notify parent and wait for continuation permission
-			start.Done()
-			proc.Wait()
-
-			// Open a tunnel to the group
-			tun, err := conn.Tunnel(cluster, 5*time.Second)
-			if err != nil {
-				errs <- fmt.Errorf("tunneling failed: %v", err)
-				done.Done()
+			// Execute the tunnel construction, message exchange and verification
+			id := fmt.Sprintf("client #%d", client)
+			if err := tunnelBuildExhangeVerify(id, conn, conf.tunnels, conf.exchanges); err != nil {
+				barrier.Exit(fmt.Errorf("exchanges failed: %v", err))
 				return
 			}
-			// Serialize a load of messages
-			for i := 0; i < messages; i++ {
-				if err := tun.Send([]byte(fmt.Sprintf("%d", i)), 5*time.Second); err != nil {
-					errs <- fmt.Errorf("send failed: %v", err)
-					done.Done()
+			barrier.Exit(nil)
+		}(i)
+	}
+	// Start up the concurrent request services
+	for i := 0; i < conf.servers; i++ {
+		go func(server int) {
+			// Create the service handler
+			handler := new(tunnelTestHandler)
+
+			// Register a new service to the relay
+			serv, err := iris.Register(config.relay, config.cluster, handler)
+			if err != nil {
+				barrier.Exit(fmt.Errorf("registration failed: %v", err))
+				return
+			}
+			defer serv.Unregister()
+			barrier.Sync()
+
+			// Execute the tunnel construction, message exchange and verification
+			id := fmt.Sprintf("server #%d", server)
+			if err := tunnelBuildExhangeVerify(id, handler.conn, conf.tunnels, conf.exchanges); err != nil {
+				barrier.Exit(fmt.Errorf("exchanges failed: %v", err))
+				return
+			}
+			barrier.Exit(nil)
+		}(i)
+	}
+	// Schedule the parallel operations
+	if errs := barrier.Wait(); len(errs) != 0 {
+		t.Fatalf("startup phase failed: %v.", errs)
+	}
+	if errs := barrier.Wait(); len(errs) != 0 {
+		t.Fatalf("tunneling phase failed: %v.", errs)
+	}
+}
+
+// Opens a batch of concurrent tunnels, and executes a data exchange.
+func tunnelBuildExhangeVerify(id string, conn *iris.Connection, tunnels, exchanges int) error {
+	barrier := newBarrier(tunnels)
+	for i := 0; i < tunnels; i++ {
+		go func(tunnel int) {
+			// Open a tunnel to the service cluster
+			tun, err := conn.Tunnel(config.cluster, time.Second)
+			if err != nil {
+				barrier.Exit(fmt.Errorf("tunnel construction failed: %v", err))
+				return
+			}
+			defer tun.Close()
+
+			// Serialize a batch of messages
+			for i := 0; i < exchanges; i++ {
+				message := fmt.Sprintf("%s, tunnel #%d, message #%d", id, tunnel, i)
+				if err := tun.Send([]byte(message), time.Second); err != nil {
+					barrier.Exit(fmt.Errorf("tunnel send failed: %v", err))
 					return
 				}
 			}
 			// Read back the echo stream and verify
-			for i := 0; i < messages; i++ {
-				if msg, err := tun.Recv(5 * time.Second); err != nil {
-					errs <- fmt.Errorf("receive failed: %v", err)
-					done.Done()
+			for i := 0; i < exchanges; i++ {
+				message, err := tun.Recv(time.Second)
+				if err != nil {
+					barrier.Exit(fmt.Errorf("tunnel receive failed: %v", err))
 					return
-				} else {
-					if res := fmt.Sprintf("%d", i); res != string(msg) {
-						errs <- fmt.Errorf("message mismatch: have %v, want %v", msg, string(res))
-						done.Done()
-						return
-					}
+				}
+				original := fmt.Sprintf("%s, tunnel #%d, message #%d", id, tunnel, i)
+				if string(message) != original {
+					barrier.Exit(fmt.Errorf("message mismatch: have %v, want %v", string(message), original))
+					return
 				}
 			}
-			// Close up the tunnel
-			tun.Close()
-
-			// Wait till everybody else finishes
-			done.Done()
-			term.Wait()
-		}()
+			barrier.Exit(nil)
+		}(i)
 	}
-	// Wait for all go-routines to attach and verify
-	start.Wait()
-	select {
-	case err := <-errs:
-		t.Fatalf("startup failed: %v.", err)
-	default:
+	if errs := barrier.Wait(); len(errs) != 0 {
+		return fmt.Errorf("%v", errs)
 	}
-	// Permit the go-routines to continue
-	proc.Done()
-	done.Wait()
-	select {
-	case err := <-errs:
-		t.Fatalf("requesting failed: %v.", err)
-	default:
-	}
-	// Sync up the terminations
-	term.Done()
-	kill.Wait()
+	return nil
 }
 
-func BenchmarkTunnelTransferLatency(b *testing.B) {
-	// Set up the connection
-	cluster := "bench-tunnel-latency"
-	conn, err := iris.Connect(relayPort, cluster, new(tunneler))
-	if err != nil {
-		b.Fatalf("connection failed: %v.", err)
-	}
-	defer conn.Close()
+// Benchmarks the latency of a single tunnel send (actually two way, so halves
+// it).
+func BenchmarkTunnelLatency(b *testing.B) {
+	// Create the service handler
+	handler := new(tunnelTestHandler)
 
-	// Create the tunnel
-	tun, err := conn.Tunnel(cluster, 250*time.Millisecond)
+	// Register a new service to the relay
+	serv, err := iris.Register(config.relay, config.cluster, handler)
 	if err != nil {
-		b.Fatalf("tunneling failed: %v.", err)
+		b.Fatalf("registration failed: %v.", err)
 	}
-	// Reset the timer and measure the transfers
+	defer serv.Unregister()
+
+	// Construct the tunnel
+	tunnel, err := handler.conn.Tunnel(config.cluster, time.Second)
+	if err != nil {
+		b.Fatalf("tunnel construction failed: %v.", err)
+	}
+	defer tunnel.Close()
+
+	// Reset the timer and measure the latency
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := tun.Send([]byte{0x00}, 100*time.Millisecond); err != nil {
-			b.Fatalf("recv failed: %v.", err)
+	for i := 0; i < b.N/2; i++ {
+		if err := tunnel.Send([]byte{byte(i)}, time.Second); err != nil {
+			b.Fatalf("tunnel send failed: %v.", err)
 		}
-		if _, err := tun.Recv(100 * time.Millisecond); err != nil {
-			b.Fatalf("recv failed: %v.", err)
+		if _, err := tunnel.Recv(time.Second); err != nil {
+			b.Fatalf("tunnel receive failed: %v.", err)
 		}
 	}
+	// Stop the timer (don't measure deferred cleanup)
 	b.StopTimer()
 }
 
-func BenchmarkTunnelTransferThroughput(b *testing.B) {
-	// Set up the connection
-	cluster := "bench-tunnel-throughput"
-	conn, err := iris.Connect(relayPort, cluster, new(tunneler))
-	if err != nil {
-		b.Fatalf("connection failed: %v.", err)
-	}
-	defer conn.Close()
+// Measures the throughput of the tunnel data transfer (actually two ways, so
+// halves it).
+func BenchmarkTunnelThroughput(b *testing.B) {
+	// Create the service handler
+	handler := new(tunnelTestHandler)
 
-	// Create the tunnel
-	tun, err := conn.Tunnel(cluster, 250*time.Millisecond)
+	// Register a new service to the relay
+	serv, err := iris.Register(config.relay, config.cluster, handler)
 	if err != nil {
-		b.Fatalf("tunneling failed: %v.", err)
+		b.Fatalf("registration failed: %v.", err)
 	}
-	// Reset the timer and measure the transfers
+	defer serv.Unregister()
+
+	// Construct the tunnel
+	tunnel, err := handler.conn.Tunnel(config.cluster, time.Second)
+	if err != nil {
+		b.Fatalf("tunnel construction failed: %v.", err)
+	}
+	defer tunnel.Close()
+
+	// Reset the timer and measure the throughput
 	b.ResetTimer()
 	go func() {
-		for i := 0; i < b.N; i++ {
-			if err := tun.Send([]byte{byte(i)}, 1000*time.Millisecond); err != nil {
-				b.Fatalf("send failed: %v.", err)
+		for i := 0; i < b.N/2; i++ {
+			if err := tunnel.Send([]byte{byte(i)}, time.Second); err != nil {
+				b.Fatalf("tunnel send failed: %v.", err)
 			}
 		}
 	}()
-	for i := 0; i < b.N; i++ {
-		if _, err := tun.Recv(1000 * time.Millisecond); err != nil {
-			b.Fatalf("recv failed: %v.", err)
+	for i := 0; i < b.N/2; i++ {
+		if _, err := tunnel.Recv(time.Second); err != nil {
+			b.Fatalf("tunnel receive failed: %v.", err)
 		}
 	}
+	// Stop the timer (don't measure deferred cleanup)
 	b.StopTimer()
 }
-*/
