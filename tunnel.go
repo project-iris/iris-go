@@ -9,7 +9,6 @@ package iris
 import (
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -294,7 +293,8 @@ func (t *Tunnel) handleTransfer(size int, chunk []byte) {
 	// If a new message is arriving, dump anything stored before
 	if size != 0 {
 		if t.chunkBuf != nil {
-			log.Printf("Discarding incomplete tunnel message (%d bytes).", len(t.chunkBuf))
+			// A large transfer timed out, new started, grant the partials allowance
+			go t.conn.sendTunnelAllowance(t.id, len(t.chunkBuf))
 		}
 		t.chunkBuf = make([]byte, 0, size)
 	}

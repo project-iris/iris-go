@@ -189,6 +189,50 @@ func TestTunnelChunking(t *testing.T) {
 	}
 }
 
+// Tests that a tunnel remains operational even after overloads (partially
+// transferred huge messages timeouting).
+func TestTunnelOverload(t *testing.T) {
+	// Create the service handler
+	handler := new(tunnelTestHandler)
+
+	// Register a new service to the relay
+	serv, err := iris.Register(config.relay, config.cluster, handler)
+	if err != nil {
+		t.Fatalf("registration failed: %v.", err)
+	}
+	defer serv.Unregister()
+
+	// Construct the tunnel
+	tunnel, err := handler.conn.Tunnel(config.cluster, time.Second)
+	if err != nil {
+		t.Fatalf("tunnel construction failed: %v.", err)
+	}
+	defer tunnel.Close()
+
+	// Overload the tunnel by partially transferring huge messages
+	blob := make([]byte, 64*1024*1024)
+	for i := 0; i < 10; i++ {
+		if err := tunnel.Send(blob, time.Millisecond); err != iris.ErrTimeout {
+			t.Fatalf("unexpected send result: have %v, want %v.", err, iris.ErrTimeout)
+		}
+	}
+	// Verify that the tunnel is still operational
+	data := []byte{0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04}
+	for i := 0; i < 10; i++ { // Iteration's important, the first will always cross (allowance ignore)
+		if err := tunnel.Send(data, time.Second); err != nil {
+			t.Fatalf("failed to send data: %v.", err)
+		}
+		back, err := tunnel.Recv(time.Second)
+		if err != nil {
+			t.Fatalf("failed to retrieve data: %v.", err)
+		}
+		// Verify that they indeed match
+		if bytes.Compare(back, data) != 0 {
+			t.Fatalf("data mismatch: have %v, want %v.", back, data)
+		}
+	}
+}
+
 // Benchmarks the latency of a single tunnel send (actually two way, so halves
 // it).
 func BenchmarkTunnelLatency(b *testing.B) {
