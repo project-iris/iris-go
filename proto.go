@@ -443,7 +443,7 @@ func (c *Connection) procRequest() error {
 	if err != nil {
 		return err
 	}
-	go c.handleRequest(id, request, int(timeout))
+	c.handleRequest(id, request, int(timeout))
 	return nil
 }
 
@@ -458,7 +458,7 @@ func (c *Connection) procReply() error {
 		return err
 	}
 	if timeout {
-		go c.handleReply(id, nil, "")
+		c.handleReply(id, nil, "")
 		return nil
 	}
 	// The request didn't time out, get the result
@@ -471,13 +471,13 @@ func (c *Connection) procReply() error {
 		if err != nil {
 			return err
 		}
-		go c.handleReply(id, reply, "")
+		c.handleReply(id, reply, "")
 	} else {
 		fault, err := c.recvString()
 		if err != nil {
 			return err
 		}
-		go c.handleReply(id, nil, fault)
+		c.handleReply(id, nil, fault)
 	}
 	return nil
 }

@@ -40,6 +40,9 @@ type Connection struct {
 	bcastPool *pool.ThreadPool // Queue and concurrency limiter for the broadcast handlers
 	bcastUsed int32            // Actual memory usage of the broadcast queue
 
+	reqPool *pool.ThreadPool // Queue and concurrency limiter for the request handlers
+	reqUsed int32            // Actual memory usage of the request queue
+
 	// Network layer fields
 	sock     net.Conn          // Network connection to the iris node
 	sockBuf  *bufio.ReadWriter // Buffered access to the network socket
@@ -90,6 +93,7 @@ func newConnection(port int, cluster string, handler ServiceHandler, limits *Ser
 		limits: limits,
 
 		bcastPool: pool.NewThreadPool(limits.BroadcastThreads),
+		reqPool:   pool.NewThreadPool(limits.RequestThreads),
 
 		// Network layer
 		sock:    sock,
@@ -126,6 +130,12 @@ func finalizeLimits(user *ServiceLimits) *ServiceLimits {
 	}
 	if user.BroadcastMemory == 0 {
 		limits.BroadcastMemory = defaultServiceLimits.BroadcastMemory
+	}
+	if user.RequestThreads == 0 {
+		limits.RequestThreads = defaultServiceLimits.RequestThreads
+	}
+	if user.RequestMemory == 0 {
+		limits.RequestMemory = defaultServiceLimits.RequestMemory
 	}
 	return limits
 }

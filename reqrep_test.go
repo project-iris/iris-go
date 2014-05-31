@@ -17,27 +17,27 @@ import (
 )
 
 // Service handler for the request/reply tests.
-type reqrepTestHandler struct {
+type requestTestHandler struct {
 	conn *Connection
 }
 
-func (r *reqrepTestHandler) Init(conn *Connection) error              { r.conn = conn; return nil }
-func (r *reqrepTestHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
-func (r *reqrepTestHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
-func (r *reqrepTestHandler) HandleTunnel(tun *Tunnel)                 { panic("not implemented") }
-func (r *reqrepTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
+func (r *requestTestHandler) Init(conn *Connection) error              { r.conn = conn; return nil }
+func (r *requestTestHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
+func (r *requestTestHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
+func (r *requestTestHandler) HandleTunnel(tun *Tunnel)                 { panic("not implemented") }
+func (r *requestTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
 
 // Service handler for the request/reply failure tests.
-type reqrepFailTestHandler struct {
+type requestFailTestHandler struct {
 	conn *Connection
 }
 
-func (r *reqrepFailTestHandler) Init(conn *Connection) error { r.conn = conn; return nil }
-func (r *reqrepFailTestHandler) HandleBroadcast(msg []byte)  { panic("not implemented") }
-func (r *reqrepFailTestHandler) HandleTunnel(tun *Tunnel)    { panic("not implemented") }
-func (r *reqrepFailTestHandler) HandleDrop(reason error)     { panic("not implemented") }
+func (r *requestFailTestHandler) Init(conn *Connection) error { r.conn = conn; return nil }
+func (r *requestFailTestHandler) HandleBroadcast(msg []byte)  { panic("not implemented") }
+func (r *requestFailTestHandler) HandleTunnel(tun *Tunnel)    { panic("not implemented") }
+func (r *requestFailTestHandler) HandleDrop(reason error)     { panic("not implemented") }
 
-func (r *reqrepFailTestHandler) HandleRequest(req []byte) ([]byte, error) {
+func (r *requestFailTestHandler) HandleRequest(req []byte) ([]byte, error) {
 	return nil, errors.New(string(req))
 }
 
@@ -89,7 +89,7 @@ func TestRequest(t *testing.T) {
 			defer shutdown.Done()
 
 			// Create the service handler
-			handler := new(reqrepTestHandler)
+			handler := new(requestTestHandler)
 
 			// Register a new service to the relay
 			serv, err := Register(config.relay, config.cluster, handler, nil)
@@ -133,7 +133,7 @@ func TestRequestFail(t *testing.T) {
 	}{125}
 
 	// Create the service handler
-	handler := new(reqrepFailTestHandler)
+	handler := new(requestFailTestHandler)
 
 	// Register a new service to the relay
 	serv, err := Register(config.relay, config.cluster, handler, nil)
@@ -155,10 +155,107 @@ func TestRequestFail(t *testing.T) {
 	}
 }
 
+// Service handler for the request/reply limit tests.
+type requestLimitTestHandler struct {
+	conn  *Connection
+	sleep time.Duration
+}
+
+func (r *requestLimitTestHandler) Init(conn *Connection) error { r.conn = conn; return nil }
+func (r *requestLimitTestHandler) HandleBroadcast(msg []byte)  { panic("not implemented") }
+func (r *requestLimitTestHandler) HandleTunnel(tun *Tunnel)    { panic("not implemented") }
+func (r *requestLimitTestHandler) HandleDrop(reason error)     { panic("not implemented") }
+
+func (r *requestLimitTestHandler) HandleRequest(req []byte) ([]byte, error) {
+	time.Sleep(r.sleep)
+	return req, nil
+}
+
+// Tests the request thread limitation.
+func TestRequestThreadLimit(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		requests int
+		sleep    time.Duration
+	}{4, 25 * time.Millisecond}
+
+	// Create the service handler and limiter
+	handler := &requestLimitTestHandler{
+		sleep: conf.sleep,
+	}
+	limits := &ServiceLimits{RequestThreads: 1}
+
+	// Register a new service to the relay
+	serv, err := Register(config.relay, config.cluster, handler, limits)
+	if err != nil {
+		t.Fatalf("registration failed: %v.", err)
+	}
+	defer serv.Unregister()
+
+	// Start a batch of requesters
+	done := make(chan struct{}, conf.requests)
+	for i := 0; i < conf.requests; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			if _, err := handler.conn.Request(config.cluster, []byte{0x00}, time.Duration(conf.requests+1)*conf.sleep); err != nil {
+				t.Fatalf("request failed: %v.", err)
+			}
+		}()
+	}
+	// Wait for half of them to complete and verify completion
+	time.Sleep(time.Duration(conf.requests/2)*conf.sleep + conf.sleep/2)
+	for i := 0; i < conf.requests/2; i++ {
+		select {
+		case <-done:
+		default:
+			t.Fatalf("request #%d not completed.", i)
+		}
+	}
+	select {
+	case <-done:
+		t.Fatalf("extra request completed.")
+	default:
+	}
+	// Wait for the rest to complete
+	time.Sleep(time.Duration(conf.requests/2)*conf.sleep + conf.sleep/2)
+	for i := conf.requests / 2; i < conf.requests; i++ {
+		select {
+		case <-done:
+		default:
+			t.Fatalf("request #%d not completed.", i)
+		}
+	}
+}
+
+// Tests the request memory limitation.
+func TestRequestMemoryLimit(t *testing.T) {
+	// Create the service handler and limiter
+	handler := new(requestTestHandler)
+	limits := &ServiceLimits{
+		RequestThreads: 1,
+		RequestMemory:  1,
+	}
+	// Register a new service to the relay
+	serv, err := Register(config.relay, config.cluster, handler, limits)
+	if err != nil {
+		t.Fatalf("registration failed: %v.", err)
+	}
+	defer serv.Unregister()
+
+	// Check that a 1 byte request passes
+	if _, err := handler.conn.Request(config.cluster, []byte{0x00}, 25*time.Millisecond); err != nil {
+		t.Fatalf("small request failed: %v.", err)
+	}
+	// Check that a 2 byte request is dropped
+	if rep, err := handler.conn.Request(config.cluster, []byte{0x00, 0x00}, 25*time.Millisecond); err != ErrTimeout {
+		t.Fatalf("large request didn't time out: %v : %v.", rep, err)
+	}
+}
+
 // Benchmarks the latency of a single request/reply operation.
 func BenchmarkRequestLatency(b *testing.B) {
 	// Create the service handler
-	handler := new(reqrepTestHandler)
+	handler := new(requestTestHandler)
 
 	// Register a new service to the relay
 	serv, err := Register(config.relay, config.cluster, handler, nil)
@@ -213,7 +310,7 @@ func BenchmarkRequestThroughput128Threads(b *testing.B) {
 
 func benchmarkRequestThroughput(threads int, b *testing.B) {
 	// Create the service handler
-	handler := new(reqrepTestHandler)
+	handler := new(requestTestHandler)
 
 	// Register a new service to the relay
 	serv, err := Register(config.relay, config.cluster, handler, nil)

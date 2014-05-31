@@ -34,13 +34,26 @@ func (c *Connection) handleBroadcast(message []byte) {
 // Services an application request by calling the upper layer handler and returns
 // the response or the encountered error.
 func (c *Connection) handleRequest(id uint64, request []byte, timeout int) {
-	reply, fault := c.handler.HandleRequest(request)
-	if fault == nil {
-		fault = errors.New("")
+	// Make sure there is enough memory for the request
+	if int(atomic.LoadInt32(&c.reqUsed))+len(request) <= c.limits.RequestMemory {
+		// Increment the memory usage of the queue and schedule the request
+		atomic.AddInt32(&c.reqUsed, int32(len(request)))
+		c.reqPool.Schedule(func() {
+			// Start the processing by decrementing the memory usage
+			atomic.AddInt32(&c.reqUsed, -int32(len(request)))
+
+			reply, fault := c.handler.HandleRequest(request)
+			if fault == nil {
+				fault = errors.New("")
+			}
+			if err := c.sendReply(id, reply, fault.Error()); err != nil {
+				log.Printf("iris: failed to send reply: %v.", err)
+			}
+		})
+		return
 	}
-	if err := c.sendReply(id, reply, fault.Error()); err != nil {
-		log.Printf("iris: failed to send reply: %v.", err)
-	}
+	// Not enough memory in the request queue
+	log.Printf("memory allowance exceeded, request dropped.")
 }
 
 // Looks up a pending request and delivers the result.

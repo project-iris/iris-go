@@ -71,6 +71,7 @@ func Register(port int, cluster string, handler ServiceHandler, limits *ServiceL
 	}
 	// Start the handler pools
 	conn.bcastPool.Start()
+	conn.reqPool.Start()
 
 	return serv, nil
 }
@@ -81,6 +82,7 @@ func (s *Service) Unregister() error {
 	err := s.conn.Close()
 
 	// Stop all the thread pools
+	s.conn.reqPool.Terminate(true)
 	s.conn.bcastPool.Terminate(true)
 
 	// Return the result of the connection close
