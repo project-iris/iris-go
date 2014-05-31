@@ -154,6 +154,8 @@ func BenchmarkBroadcastLatency(b *testing.B) {
 		handler.conn.Broadcast(config.cluster, []byte{byte(i)})
 		<-handler.delivers
 	}
+	// Stop the timer (don't measure deferred cleanup)
+	b.StopTimer()
 }
 
 // Benchmarks broadcasting a stream of messages.
@@ -216,6 +218,8 @@ func benchmarkBroadcastThroughput(threads int, b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		<-handler.delivers
 	}
+	workers.Terminate(false)
+
+	// Stop the timer (don't measure deferred cleanup)
 	b.StopTimer()
-	workers.Terminate(true)
 }

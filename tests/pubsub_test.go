@@ -234,6 +234,8 @@ func BenchmarkPublishLatency(b *testing.B) {
 		}
 		<-handler.delivers
 	}
+	// Stop the timer (don't measure deferred cleanup)
+	b.StopTimer()
 }
 
 // Benchmarks the throughput of a stream of concurrent publishes.
@@ -303,4 +305,7 @@ func benchmarkPublishThroughput(threads int, b *testing.B) {
 	b.ResetTimer()
 	workers.Start()
 	workers.Terminate(false)
+
+	// Stop the timer (don't measure deferred cleanup)
+	b.StopTimer()
 }

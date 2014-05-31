@@ -103,7 +103,7 @@ func BenchmarkConnect(b *testing.B) {
 			defer conn.Close()
 		}
 	}
-	// Stop the timer and clean up
+	// Stop the timer (don't measure deferred cleanup)
 	b.StopTimer()
 }
 
@@ -116,6 +116,6 @@ func BenchmarkRegister(b *testing.B) {
 			defer serv.Unregister()
 		}
 	}
-	// Stop the timer and clean up
+	// Stop the timer (don't measure deferred cleanup)
 	b.StopTimer()
 }

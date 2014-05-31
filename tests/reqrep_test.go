@@ -165,6 +165,8 @@ func BenchmarkRequestLatency(b *testing.B) {
 			b.Fatalf("request failed: %v.", err)
 		}
 	}
+	// Stop the timer (don't measure deferred cleanup)
+	b.StopTimer()
 }
 
 // Benchmarks the throughput of a stream of concurrent requests.
@@ -224,4 +226,7 @@ func benchmarkRequestThroughput(threads int, b *testing.B) {
 	b.ResetTimer()
 	workers.Start()
 	workers.Terminate(false)
+
+	// Stop the timer (don't measure deferred cleanup)
+	b.StopTimer()
 }
