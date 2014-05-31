@@ -7,6 +7,7 @@
 package tests
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 	"time"
@@ -149,6 +150,43 @@ func tunnelBuildExhangeVerify(id string, conn *iris.Connection, tunnels, exchang
 		return fmt.Errorf("%v", errs)
 	}
 	return nil
+}
+
+// Tests that large messages get delivered properly.
+func TestTunnelChunking(t *testing.T) {
+	// Create the service handler
+	handler := new(tunnelTestHandler)
+
+	// Register a new service to the relay
+	serv, err := iris.Register(config.relay, config.cluster, handler)
+	if err != nil {
+		t.Fatalf("registration failed: %v.", err)
+	}
+	defer serv.Unregister()
+
+	// Construct the tunnel
+	tunnel, err := handler.conn.Tunnel(config.cluster, time.Second)
+	if err != nil {
+		t.Fatalf("tunnel construction failed: %v.", err)
+	}
+	defer tunnel.Close()
+
+	// Create and transfer a huge message
+	blob := make([]byte, 16*1024*1024)
+	for i := 0; i < len(blob); i++ {
+		blob[i] = byte(i)
+	}
+	if err := tunnel.Send(blob, 10*time.Second); err != nil {
+		t.Fatalf("failed to send blob: %v.", err)
+	}
+	back, err := tunnel.Recv(10 * time.Second)
+	if err != nil {
+		t.Fatalf("failed to retrieve blob: %v.", err)
+	}
+	// Verify that they indeed match
+	if bytes.Compare(back, blob) != 0 {
+		t.Fatalf("data blob mismatch")
+	}
 }
 
 // Benchmarks the latency of a single tunnel send (actually two way, so halves

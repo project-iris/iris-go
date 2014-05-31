@@ -281,7 +281,7 @@ func (c *Connection) sendTunnelAllowance(id uint64, space int) error {
 }
 
 // Sends a tunnel data exchange.
-func (c *Connection) sendTunnelTransfer(id uint64, first bool, payload []byte) error {
+func (c *Connection) sendTunnelTransfer(id uint64, sizeOrCont int, payload []byte) error {
 	c.sockLock.Lock()
 	defer c.sockLock.Unlock()
 
@@ -291,11 +291,7 @@ func (c *Connection) sendTunnelTransfer(id uint64, first bool, payload []byte) e
 	if err := c.sendVarint(id); err != nil {
 		return err
 	}
-	size := 0
-	if first {
-		size = len(payload)
-	}
-	if err := c.sendVarint(uint64(size)); err != nil {
+	if err := c.sendVarint(uint64(sizeOrCont)); err != nil {
 		return err
 	}
 	if err := c.sendBinary(payload); err != nil {

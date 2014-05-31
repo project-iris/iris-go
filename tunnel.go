@@ -153,7 +153,11 @@ func (t *Tunnel) Send(message []byte, timeout time.Duration) error {
 		if end > len(message) {
 			end = len(message)
 		}
-		if err := t.sendChunk(message[pos:end], pos == 0, deadline); err != nil {
+		sizeOrCont := len(message)
+		if pos != 0 {
+			sizeOrCont = 0
+		}
+		if err := t.sendChunk(message[pos:end], sizeOrCont, deadline); err != nil {
 			return err
 		}
 	}
@@ -161,11 +165,11 @@ func (t *Tunnel) Send(message []byte, timeout time.Duration) error {
 }
 
 // Sends a single message chunk to the remote endpoint.
-func (t *Tunnel) sendChunk(chunk []byte, first bool, deadline <-chan time.Time) error {
+func (t *Tunnel) sendChunk(chunk []byte, sizeOrCont int, deadline <-chan time.Time) error {
 	for {
 		// Short circuit if there's enough space allowance already
 		if t.drainAllowance(len(chunk)) {
-			return t.conn.sendTunnelTransfer(t.id, first, chunk)
+			return t.conn.sendTunnelTransfer(t.id, sizeOrCont, chunk)
 		}
 		// Query for a send allowance
 		select {
