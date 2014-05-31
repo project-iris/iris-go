@@ -9,6 +9,7 @@ package iris
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,10 +38,14 @@ func TestBroadcast(t *testing.T) {
 	}{25, 25, 25}
 
 	barrier := newBarrier(conf.clients + conf.servers)
+	shutdown := new(sync.WaitGroup)
 
 	// Start up the concurrent broadcasting clients
 	for i := 0; i < conf.clients; i++ {
+		shutdown.Add(1)
 		go func(client int) {
+			defer shutdown.Done()
+
 			// Connect to the local relay
 			conn, err := Connect(config.relay)
 			if err != nil {
@@ -63,7 +68,10 @@ func TestBroadcast(t *testing.T) {
 	}
 	// Start up the concurrent broadcast services
 	for i := 0; i < conf.servers; i++ {
+		shutdown.Add(1)
 		go func(server int) {
+			defer shutdown.Done()
+
 			// Create the service handler
 			handler := &broadcastTestHandler{
 				delivers: make(chan []byte, (conf.clients+conf.servers)*conf.messages),
@@ -132,6 +140,8 @@ func TestBroadcast(t *testing.T) {
 	if errs := barrier.Wait(); len(errs) != 0 {
 		t.Fatalf("verification phase failed: %v.", errs)
 	}
+	// Make sure all children terminated
+	shutdown.Wait()
 }
 
 // Benchmarks broadcasting a single message.

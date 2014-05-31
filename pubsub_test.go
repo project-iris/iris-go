@@ -9,6 +9,7 @@ package iris
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,10 +51,14 @@ func TestPublish(t *testing.T) {
 	}
 
 	barrier := newBarrier(conf.clients + conf.servers)
+	shutdown := new(sync.WaitGroup)
 
 	// Start up the concurrent publishing clients
 	for i := 0; i < conf.clients; i++ {
+		shutdown.Add(1)
 		go func(client int) {
+			defer shutdown.Done()
+
 			// Connect to the local relay
 			conn, err := Connect(config.relay)
 			if err != nil {
@@ -103,7 +108,10 @@ func TestPublish(t *testing.T) {
 	}
 	// Start up the concurrent publishing services
 	for i := 0; i < conf.servers; i++ {
+		shutdown.Add(1)
 		go func(server int) {
+			defer shutdown.Done()
+
 			// Create the service handler
 			handler := new(pubsubTestServiceHandler)
 
@@ -164,6 +172,8 @@ func TestPublish(t *testing.T) {
 	if errs := barrier.Wait(); len(errs) != 0 {
 		t.Fatalf("verification phase failed: %v.", errs)
 	}
+	// Make sure all children terminated
+	shutdown.Wait()
 }
 
 // Verifies the delivered topic events.
@@ -219,10 +229,7 @@ func BenchmarkPublishLatency(b *testing.B) {
 	if err := conn.Subscribe(config.topic, handler); err != nil {
 		b.Fatalf("subscription failed: %v", err)
 	}
-	defer func() {
-		conn.Unsubscribe(config.topic)
-		time.Sleep(100 * time.Millisecond)
-	}()
+	defer conn.Unsubscribe(config.topic)
 	time.Sleep(100 * time.Millisecond)
 
 	// Reset timer and time sync publish
@@ -285,10 +292,7 @@ func benchmarkPublishThroughput(threads int, b *testing.B) {
 	if err := conn.Subscribe(config.topic, handler); err != nil {
 		b.Fatalf("subscription failed: %v", err)
 	}
-	defer func() {
-		conn.Unsubscribe(config.topic)
-		time.Sleep(100 * time.Millisecond)
-	}()
+	defer conn.Unsubscribe(config.topic)
 	time.Sleep(100 * time.Millisecond)
 
 	// Create the thread pool with the concurrent publishes

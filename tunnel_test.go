@@ -9,6 +9,7 @@ package iris
 import (
 	"bytes"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -52,10 +53,14 @@ func TestTunnel(t *testing.T) {
 	}{7, 7, 7, 7}
 
 	barrier := newBarrier(conf.clients + conf.servers)
+	shutdown := new(sync.WaitGroup)
 
 	// Start up the concurrent tunneling clients
 	for i := 0; i < conf.clients; i++ {
+		shutdown.Add(1)
 		go func(client int) {
+			defer shutdown.Done()
+
 			// Connect to the local relay
 			conn, err := Connect(config.relay)
 			if err != nil {
@@ -76,7 +81,10 @@ func TestTunnel(t *testing.T) {
 	}
 	// Start up the concurrent request services
 	for i := 0; i < conf.servers; i++ {
+		shutdown.Add(1)
 		go func(server int) {
+			defer shutdown.Done()
+
 			// Create the service handler
 			handler := new(tunnelTestHandler)
 
@@ -105,6 +113,8 @@ func TestTunnel(t *testing.T) {
 	if errs := barrier.Wait(); len(errs) != 0 {
 		t.Fatalf("tunneling phase failed: %v.", errs)
 	}
+	// Make sure all children terminated
+	shutdown.Wait()
 }
 
 // Opens a batch of concurrent tunnels, and executes a data exchange.

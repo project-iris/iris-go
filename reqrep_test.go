@@ -9,6 +9,7 @@ package iris
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,10 +51,14 @@ func TestRequest(t *testing.T) {
 	}{25, 25, 25}
 
 	barrier := newBarrier(conf.clients + conf.servers)
+	shutdown := new(sync.WaitGroup)
 
 	// Start up the concurrent requesting clients
 	for i := 0; i < conf.clients; i++ {
+		shutdown.Add(1)
 		go func(client int) {
+			defer shutdown.Done()
+
 			// Connect to the local relay
 			conn, err := Connect(config.relay)
 			if err != nil {
@@ -79,7 +84,10 @@ func TestRequest(t *testing.T) {
 	}
 	// Start up the concurrent request services
 	for i := 0; i < conf.servers; i++ {
+		shutdown.Add(1)
 		go func(server int) {
+			defer shutdown.Done()
+
 			// Create the service handler
 			handler := new(reqrepTestHandler)
 
@@ -113,6 +121,8 @@ func TestRequest(t *testing.T) {
 	if errs := barrier.Wait(); len(errs) != 0 {
 		t.Fatalf("request phase failed: %v.", errs)
 	}
+	// Make sure all children terminated
+	shutdown.Wait()
 }
 
 // Tests request failure forwarding.
