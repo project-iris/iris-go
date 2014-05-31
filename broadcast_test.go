@@ -4,7 +4,7 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-package tests
+package iris
 
 import (
 	"errors"
@@ -13,19 +13,18 @@ import (
 	"time"
 
 	"github.com/project-iris/iris/pool"
-	"gopkg.in/project-iris/iris-go.v0"
 )
 
 // Service handler for the broadcast tests.
 type broadcastTestHandler struct {
-	conn     *iris.Connection
+	conn     *Connection
 	delivers chan []byte
 }
 
-func (b *broadcastTestHandler) Init(conn *iris.Connection) error         { b.conn = conn; return nil }
+func (b *broadcastTestHandler) Init(conn *Connection) error              { b.conn = conn; return nil }
 func (b *broadcastTestHandler) HandleBroadcast(msg []byte)               { b.delivers <- msg }
 func (b *broadcastTestHandler) HandleRequest(req []byte) ([]byte, error) { panic("not implemented") }
-func (b *broadcastTestHandler) HandleTunnel(tun *iris.Tunnel)            { panic("not implemented") }
+func (b *broadcastTestHandler) HandleTunnel(tun *Tunnel)                 { panic("not implemented") }
 func (b *broadcastTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
 
 // Tests multiple concurrent client and service broadcasts.
@@ -43,7 +42,7 @@ func TestBroadcast(t *testing.T) {
 	for i := 0; i < conf.clients; i++ {
 		go func(client int) {
 			// Connect to the local relay
-			conn, err := iris.Connect(config.relay)
+			conn, err := Connect(config.relay)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("connection failed: %v", err))
 				return
@@ -70,7 +69,7 @@ func TestBroadcast(t *testing.T) {
 				delivers: make(chan []byte, (conf.clients+conf.servers)*conf.messages),
 			}
 			// Register a new service to the relay
-			serv, err := iris.Register(config.relay, config.cluster, handler)
+			serv, err := Register(config.relay, config.cluster, handler)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -142,7 +141,7 @@ func BenchmarkBroadcastLatency(b *testing.B) {
 		delivers: make(chan []byte, b.N),
 	}
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}
@@ -197,7 +196,7 @@ func benchmarkBroadcastThroughput(threads int, b *testing.B) {
 		delivers: make(chan []byte, b.N),
 	}
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}

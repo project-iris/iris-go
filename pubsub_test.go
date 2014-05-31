@@ -4,7 +4,7 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-package tests
+package iris
 
 import (
 	"errors"
@@ -13,18 +13,17 @@ import (
 	"time"
 
 	"github.com/project-iris/iris/pool"
-	"gopkg.in/project-iris/iris-go.v0"
 )
 
 // Service handler for the publish/subscribe tests.
 type pubsubTestServiceHandler struct {
-	conn *iris.Connection
+	conn *Connection
 }
 
-func (p *pubsubTestServiceHandler) Init(conn *iris.Connection) error         { p.conn = conn; return nil }
+func (p *pubsubTestServiceHandler) Init(conn *Connection) error              { p.conn = conn; return nil }
 func (p *pubsubTestServiceHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
 func (p *pubsubTestServiceHandler) HandleRequest(req []byte) ([]byte, error) { panic("not implemented") }
-func (p *pubsubTestServiceHandler) HandleTunnel(tun *iris.Tunnel)            { panic("not implemented") }
+func (p *pubsubTestServiceHandler) HandleTunnel(tun *Tunnel)                 { panic("not implemented") }
 func (p *pubsubTestServiceHandler) HandleDrop(reason error)                  { panic("not implemented") }
 
 // Topic handler for the publish/subscribe tests.
@@ -56,7 +55,7 @@ func TestPublish(t *testing.T) {
 	for i := 0; i < conf.clients; i++ {
 		go func(client int) {
 			// Connect to the local relay
-			conn, err := iris.Connect(config.relay)
+			conn, err := Connect(config.relay)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("connection failed: %v", err))
 				return
@@ -109,7 +108,7 @@ func TestPublish(t *testing.T) {
 			handler := new(pubsubTestServiceHandler)
 
 			// Register a new service to the relay
-			serv, err := iris.Register(config.relay, config.cluster, handler)
+			serv, err := Register(config.relay, config.cluster, handler)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -207,7 +206,7 @@ func publishVerifyEvents(clients, servers, publishes int, hands []*pubsubTestTop
 // Benchmarks the latency of a single publish operation.
 func BenchmarkPublishLatency(b *testing.B) {
 	// Connect to the local relay
-	conn, err := iris.Connect(config.relay)
+	conn, err := Connect(config.relay)
 	if err != nil {
 		b.Fatalf("connection failed: %v", err)
 	}
@@ -273,7 +272,7 @@ func BenchmarkPublishThroughput128Threads(b *testing.B) {
 
 func benchmarkPublishThroughput(threads int, b *testing.B) {
 	// Connect to the local relay
-	conn, err := iris.Connect(config.relay)
+	conn, err := Connect(config.relay)
 	if err != nil {
 		b.Fatalf("connection failed: %v", err)
 	}

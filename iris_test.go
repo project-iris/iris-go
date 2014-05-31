@@ -4,13 +4,11 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-package tests
+package iris
 
 import (
 	"fmt"
 	"testing"
-
-	"gopkg.in/project-iris/iris-go.v0"
 )
 
 // Tests multiple concurrent client connections.
@@ -25,7 +23,7 @@ func TestConnect(t *testing.T) {
 	for i := 0; i < conf.clients; i++ {
 		go func() {
 			// Connect to the local relay
-			conn, err := iris.Connect(config.relay)
+			conn, err := Connect(config.relay)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("connection failed: %v", err))
 				return
@@ -52,10 +50,10 @@ func TestConnect(t *testing.T) {
 // Service handler for the registration tests.
 type registerTestHandler struct{}
 
-func (r *registerTestHandler) Init(conn *iris.Connection) error         { return nil }
+func (r *registerTestHandler) Init(conn *Connection) error              { return nil }
 func (r *registerTestHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
 func (r *registerTestHandler) HandleRequest(req []byte) ([]byte, error) { panic("not implemented") }
-func (r *registerTestHandler) HandleTunnel(tun *iris.Tunnel)            { panic("not implemented") }
+func (r *registerTestHandler) HandleTunnel(tun *Tunnel)                 { panic("not implemented") }
 func (r *registerTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
 
 // Tests multiple concurrent service registrations.
@@ -70,7 +68,7 @@ func TestRegister(t *testing.T) {
 	for i := 0; i < conf.services; i++ {
 		go func() {
 			// Register a new service to the relay
-			serv, err := iris.Register(config.relay, config.cluster, new(registerTestHandler))
+			serv, err := Register(config.relay, config.cluster, new(registerTestHandler))
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -97,7 +95,7 @@ func TestRegister(t *testing.T) {
 // Benchmarks client connection.
 func BenchmarkConnect(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if conn, err := iris.Connect(config.relay); err != nil {
+		if conn, err := Connect(config.relay); err != nil {
 			b.Fatalf("iteration %d: connection failed: %v.", i, err)
 		} else {
 			defer conn.Close()
@@ -110,7 +108,7 @@ func BenchmarkConnect(b *testing.B) {
 // Benchmarks service registration.
 func BenchmarkRegister(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if serv, err := iris.Register(config.relay, config.cluster, new(registerTestHandler)); err != nil {
+		if serv, err := Register(config.relay, config.cluster, new(registerTestHandler)); err != nil {
 			b.Fatalf("iteration %d: register failed: %v.", i, err)
 		} else {
 			defer serv.Unregister()

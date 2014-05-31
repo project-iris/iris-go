@@ -4,34 +4,32 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-package tests
+package iris
 
 import (
 	"bytes"
 	"fmt"
 	"testing"
 	"time"
-
-	"gopkg.in/project-iris/iris-go.v0"
 )
 
 // Service handler for the tunnel tests.
 type tunnelTestHandler struct {
-	conn *iris.Connection
+	conn *Connection
 }
 
-func (t *tunnelTestHandler) Init(conn *iris.Connection) error         { t.conn = conn; return nil }
+func (t *tunnelTestHandler) Init(conn *Connection) error              { t.conn = conn; return nil }
 func (t *tunnelTestHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
 func (t *tunnelTestHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
 func (t *tunnelTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
 
-func (t *tunnelTestHandler) HandleTunnel(tun *iris.Tunnel) {
+func (t *tunnelTestHandler) HandleTunnel(tun *Tunnel) {
 	defer tun.Close()
 
 	for {
 		msg, err := tun.Recv(0)
 		switch {
-		case err == iris.ErrClosed:
+		case err == ErrClosed:
 			return
 		case err == nil:
 			if err := tun.Send(msg, 0); err != nil {
@@ -59,7 +57,7 @@ func TestTunnel(t *testing.T) {
 	for i := 0; i < conf.clients; i++ {
 		go func(client int) {
 			// Connect to the local relay
-			conn, err := iris.Connect(config.relay)
+			conn, err := Connect(config.relay)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("connection failed: %v", err))
 				return
@@ -83,7 +81,7 @@ func TestTunnel(t *testing.T) {
 			handler := new(tunnelTestHandler)
 
 			// Register a new service to the relay
-			serv, err := iris.Register(config.relay, config.cluster, handler)
+			serv, err := Register(config.relay, config.cluster, handler)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -110,7 +108,7 @@ func TestTunnel(t *testing.T) {
 }
 
 // Opens a batch of concurrent tunnels, and executes a data exchange.
-func tunnelBuildExhangeVerify(id string, conn *iris.Connection, tunnels, exchanges int) error {
+func tunnelBuildExhangeVerify(id string, conn *Connection, tunnels, exchanges int) error {
 	barrier := newBarrier(tunnels)
 	for i := 0; i < tunnels; i++ {
 		go func(tunnel int) {
@@ -158,7 +156,7 @@ func TestTunnelChunking(t *testing.T) {
 	handler := new(tunnelTestHandler)
 
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		t.Fatalf("registration failed: %v.", err)
 	}
@@ -196,7 +194,7 @@ func TestTunnelOverload(t *testing.T) {
 	handler := new(tunnelTestHandler)
 
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		t.Fatalf("registration failed: %v.", err)
 	}
@@ -212,8 +210,8 @@ func TestTunnelOverload(t *testing.T) {
 	// Overload the tunnel by partially transferring huge messages
 	blob := make([]byte, 64*1024*1024)
 	for i := 0; i < 10; i++ {
-		if err := tunnel.Send(blob, time.Millisecond); err != iris.ErrTimeout {
-			t.Fatalf("unexpected send result: have %v, want %v.", err, iris.ErrTimeout)
+		if err := tunnel.Send(blob, time.Millisecond); err != ErrTimeout {
+			t.Fatalf("unexpected send result: have %v, want %v.", err, ErrTimeout)
 		}
 	}
 	// Verify that the tunnel is still operational
@@ -240,7 +238,7 @@ func BenchmarkTunnelLatency(b *testing.B) {
 	handler := new(tunnelTestHandler)
 
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}
@@ -274,7 +272,7 @@ func BenchmarkTunnelThroughput(b *testing.B) {
 	handler := new(tunnelTestHandler)
 
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}

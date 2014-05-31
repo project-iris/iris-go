@@ -4,7 +4,7 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-package tests
+package iris
 
 import (
 	"errors"
@@ -13,29 +13,28 @@ import (
 	"time"
 
 	"github.com/project-iris/iris/pool"
-	"gopkg.in/project-iris/iris-go.v0"
 )
 
 // Service handler for the request/reply tests.
 type reqrepTestHandler struct {
-	conn *iris.Connection
+	conn *Connection
 }
 
-func (r *reqrepTestHandler) Init(conn *iris.Connection) error         { r.conn = conn; return nil }
+func (r *reqrepTestHandler) Init(conn *Connection) error              { r.conn = conn; return nil }
 func (r *reqrepTestHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
 func (r *reqrepTestHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
-func (r *reqrepTestHandler) HandleTunnel(tun *iris.Tunnel)            { panic("not implemented") }
+func (r *reqrepTestHandler) HandleTunnel(tun *Tunnel)                 { panic("not implemented") }
 func (r *reqrepTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
 
 // Service handler for the request/reply failure tests.
 type reqrepFailTestHandler struct {
-	conn *iris.Connection
+	conn *Connection
 }
 
-func (r *reqrepFailTestHandler) Init(conn *iris.Connection) error { r.conn = conn; return nil }
-func (r *reqrepFailTestHandler) HandleBroadcast(msg []byte)       { panic("not implemented") }
-func (r *reqrepFailTestHandler) HandleTunnel(tun *iris.Tunnel)    { panic("not implemented") }
-func (r *reqrepFailTestHandler) HandleDrop(reason error)          { panic("not implemented") }
+func (r *reqrepFailTestHandler) Init(conn *Connection) error { r.conn = conn; return nil }
+func (r *reqrepFailTestHandler) HandleBroadcast(msg []byte)  { panic("not implemented") }
+func (r *reqrepFailTestHandler) HandleTunnel(tun *Tunnel)    { panic("not implemented") }
+func (r *reqrepFailTestHandler) HandleDrop(reason error)     { panic("not implemented") }
 
 func (r *reqrepFailTestHandler) HandleRequest(req []byte) ([]byte, error) {
 	return nil, errors.New(string(req))
@@ -56,7 +55,7 @@ func TestRequest(t *testing.T) {
 	for i := 0; i < conf.clients; i++ {
 		go func(client int) {
 			// Connect to the local relay
-			conn, err := iris.Connect(config.relay)
+			conn, err := Connect(config.relay)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("connection failed: %v", err))
 				return
@@ -85,7 +84,7 @@ func TestRequest(t *testing.T) {
 			handler := new(reqrepTestHandler)
 
 			// Register a new service to the relay
-			serv, err := iris.Register(config.relay, config.cluster, handler)
+			serv, err := Register(config.relay, config.cluster, handler)
 			if err != nil {
 				barrier.Exit(fmt.Errorf("registration failed: %v", err))
 				return
@@ -127,7 +126,7 @@ func TestRequestFail(t *testing.T) {
 	handler := new(reqrepFailTestHandler)
 
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		t.Fatalf("registration failed: %v", err)
 	}
@@ -152,7 +151,7 @@ func BenchmarkRequestLatency(b *testing.B) {
 	handler := new(reqrepTestHandler)
 
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}
@@ -207,7 +206,7 @@ func benchmarkRequestThroughput(threads int, b *testing.B) {
 	handler := new(reqrepTestHandler)
 
 	// Register a new service to the relay
-	serv, err := iris.Register(config.relay, config.cluster, handler)
+	serv, err := Register(config.relay, config.cluster, handler)
 	if err != nil {
 		b.Fatalf("registration failed: %v.", err)
 	}
