@@ -27,8 +27,8 @@ type Connection struct {
 	reqErrs map[uint64]chan error  // Error channels for active requests
 	reqLock sync.RWMutex           // Mutex to protect the result channel maps
 
-	subLive map[string]SubscriptionHandler // Active subscriptions
-	subLock sync.RWMutex                   // Mutex to protect the subscription map
+	subLive map[string]*topic // Active subscriptions
+	subLock sync.RWMutex      // Mutex to protect the subscription map
 
 	tunIdx  uint64             // Index to assign the next tunnel
 	tunLive map[uint64]*Tunnel // Active tunnels
@@ -54,13 +54,6 @@ type Connection struct {
 	term chan struct{}   // Channel to signal termination to blocked go-routines
 }
 
-// Callback interface for processing events from a single subscribed topic.
-type SubscriptionHandler interface {
-	// Callback invoked whenever an event is published to the topic subscribed to
-	// by this particular handler.
-	HandleEvent(event []byte)
-}
-
 // Connects to the Iris network as a simple client.
 func Connect(port int) (*Connection, error) {
 	return newConnection(port, "", nil, nil)
@@ -68,7 +61,7 @@ func Connect(port int) (*Connection, error) {
 
 // Connects to a local relay endpoint on port and registers as cluster.
 func newConnection(port int, cluster string, handler ServiceHandler, limits *ServiceLimits) (*Connection, error) {
-	limits = finalizeLimits(limits)
+	limits = finalizeServiceLimits(limits)
 
 	// Connect to the iris relay node
 	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("localhost:%d", port))
@@ -86,7 +79,7 @@ func newConnection(port int, cluster string, handler ServiceHandler, limits *Ser
 
 		reqReps: make(map[uint64]chan []byte),
 		reqErrs: make(map[uint64]chan error),
-		subLive: make(map[string]SubscriptionHandler),
+		subLive: make(map[string]*topic),
 		tunLive: make(map[uint64]*Tunnel),
 
 		// Quality of service
@@ -116,7 +109,7 @@ func newConnection(port int, cluster string, handler ServiceHandler, limits *Ser
 }
 
 // Merges the user requested limits with the defaults.
-func finalizeLimits(user *ServiceLimits) *ServiceLimits {
+func finalizeServiceLimits(user *ServiceLimits) *ServiceLimits {
 	// If the user didn't specify anything, load the full default set
 	if user == nil {
 		return &defaultServiceLimits
@@ -212,7 +205,7 @@ func (c *Connection) Request(cluster string, request []byte, timeout time.Durati
 // The method blocks until the subscription is forwarded to the relay. There
 // might be a small delay between subscription completion and start of event
 // delivery. This is caused by subscription propagation through the network.
-func (c *Connection) Subscribe(topic string, handler SubscriptionHandler) error {
+func (c *Connection) Subscribe(topic string, handler TopicHandler, limits *TopicLimits) error {
 	// Sanity check on the arguments
 	if len(topic) == 0 {
 		return errors.New("empty topic identifier")
@@ -226,14 +219,15 @@ func (c *Connection) Subscribe(topic string, handler SubscriptionHandler) error 
 		c.subLock.Unlock()
 		return errors.New("already subscribed")
 	}
-	c.subLive[topic] = handler
+	c.subLive[topic] = newTopic(handler, limits)
 	c.subLock.Unlock()
 
 	// Send the subscription request
 	err := c.sendSubscribe(topic)
 	if err != nil {
 		c.subLock.Lock()
-		if _, ok := c.subLive[topic]; ok {
+		if top, ok := c.subLive[topic]; ok {
+			top.terminate()
 			delete(c.subLive, topic)
 		}
 		c.subLock.Unlock()
@@ -271,10 +265,12 @@ func (c *Connection) Unsubscribe(topic string) error {
 		c.subLock.Lock()
 		defer c.subLock.Unlock()
 
-		if _, ok := c.subLive[topic]; !ok {
+		if top, ok := c.subLive[topic]; !ok {
 			return errors.New("not subscribed")
+		} else {
+			top.terminate()
+			delete(c.subLive, topic)
 		}
-		delete(c.subLive, topic)
 	}
 	return err
 }
@@ -311,5 +307,13 @@ func (c *Connection) Close() error {
 	// Wait till the close syncs and return
 	errc := make(chan error, 1)
 	c.quit <- errc
+
+	// Terminate all running subscription handlers
+	c.subLock.Lock()
+	for _, topic := range c.subLive {
+		topic.terminate()
+	}
+	c.subLock.Unlock()
+
 	return <-errc
 }

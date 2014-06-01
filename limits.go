@@ -19,9 +19,24 @@ type ServiceLimits struct {
 }
 
 //
+type TopicLimits struct {
+	EventThreads int // Event handlers to execute concurrently
+	EventMemory  int // Memory allowance for pending events
+}
+
+// Default limits of the threading and memory usage of a registered service.
 var defaultServiceLimits = ServiceLimits{
 	BroadcastThreads: 4 * runtime.NumCPU(),
 	BroadcastMemory:  64 * 1024 * 1024,
 	RequestThreads:   4 * runtime.NumCPU(),
 	RequestMemory:    64 * 1024 * 1024,
 }
+
+// Default limits of the threading and memory usage of a subscription.
+var defaultTopicLimits = TopicLimits{
+	EventThreads: 4 * runtime.NumCPU(),
+	EventMemory:  64 * 1024 * 1024,
+}
+
+// Size of a tunnel's input buffer
+var defaultTunnelBuffer = 64 * 1024 * 1024

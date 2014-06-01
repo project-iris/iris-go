@@ -31,8 +31,7 @@ func (c *Connection) handleBroadcast(message []byte) {
 	log.Printf("memory allowance exceeded, broadcast dropped.")
 }
 
-// Services an application request by calling the upper layer handler and returns
-// the response or the encountered error.
+// Schedules an application request for the service handler to process.
 func (c *Connection) handleRequest(id uint64, request []byte, timeout int) {
 	// Make sure there is enough memory for the request
 	if int(atomic.LoadInt32(&c.reqUsed))+len(request) <= c.limits.RequestMemory {
@@ -70,16 +69,16 @@ func (c *Connection) handleReply(id uint64, reply []byte, fault string) {
 	}
 }
 
-// Forwards a topic publish event to the subscription handler.
+// Forwards a topic publish event to the topic subscription.
 func (c *Connection) handlePublish(topic string, event []byte) {
 	// Fetch the handler and release the lock fast
 	c.subLock.RLock()
-	sub, ok := c.subLive[topic]
+	top, ok := c.subLive[topic]
 	c.subLock.RUnlock()
 
 	// Make sure the subscription is still live
 	if ok {
-		sub.HandleEvent(event)
+		top.handlePublish(event)
 	} else {
 		log.Printf("iris: stale publish arrived on: %v.", topic)
 	}

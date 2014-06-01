@@ -42,7 +42,7 @@ func TestPublish(t *testing.T) {
 		servers int
 		topics  int
 		events  int
-	}{10, 10, 10, 10}
+	}{5, 5, 7, 15}
 
 	// Pre-generate the topic names
 	topics := make([]string, conf.topics)
@@ -73,7 +73,7 @@ func TestPublish(t *testing.T) {
 				hand := &pubsubTestTopicHandler{
 					delivers: make(chan []byte, (conf.clients+conf.servers)*conf.events),
 				}
-				if err := conn.Subscribe(topic, hand); err != nil {
+				if err := conn.Subscribe(topic, hand, nil); err != nil {
 					barrier.Exit(fmt.Errorf("client subscription failed: %v", err))
 					return
 				}
@@ -129,7 +129,7 @@ func TestPublish(t *testing.T) {
 				hand := &pubsubTestTopicHandler{
 					delivers: make(chan []byte, (conf.clients+conf.servers)*conf.events),
 				}
-				if err := handler.conn.Subscribe(topic, hand); err != nil {
+				if err := handler.conn.Subscribe(topic, hand, nil); err != nil {
 					barrier.Exit(fmt.Errorf("service subscription failed: %v", err))
 					return
 				}
@@ -226,7 +226,7 @@ func BenchmarkPublishLatency(b *testing.B) {
 	handler := &pubsubTestTopicHandler{
 		delivers: make(chan []byte, b.N),
 	}
-	if err := conn.Subscribe(config.topic, handler); err != nil {
+	if err := conn.Subscribe(config.topic, handler, nil); err != nil {
 		b.Fatalf("subscription failed: %v", err)
 	}
 	defer conn.Unsubscribe(config.topic)
@@ -289,7 +289,7 @@ func benchmarkPublishThroughput(threads int, b *testing.B) {
 	handler := &pubsubTestTopicHandler{
 		delivers: make(chan []byte, b.N),
 	}
-	if err := conn.Subscribe(config.topic, handler); err != nil {
+	if err := conn.Subscribe(config.topic, handler, nil); err != nil {
 		b.Fatalf("subscription failed: %v", err)
 	}
 	defer conn.Unsubscribe(config.topic)

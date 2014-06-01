@@ -15,9 +15,6 @@ import (
 	"github.com/project-iris/iris/container/queue"
 )
 
-// Iris to app buffer size for flow control.
-var tunnelBuffer = 2 * 1024 * 1024 // 2MB
-
 // Communication stream between the local application and a remote endpoint. The
 // ordered delivery of messages is guaranteed and the message flow between the
 // peers is throttled.
@@ -88,7 +85,7 @@ func (c *Connection) initTunnel(cluster string, timeout int) (*Tunnel, error) {
 		case init := <-tun.init:
 			if init {
 				// Send the data allowance
-				if err = c.sendTunnelAllowance(tun.id, tunnelBuffer); err == nil {
+				if err = c.sendTunnelAllowance(tun.id, defaultTunnelBuffer); err == nil {
 					return tun, nil
 				}
 			} else {
@@ -123,7 +120,7 @@ func (c *Connection) acceptTunnel(initId uint64, chunkLimit int) (*Tunnel, error
 		return nil, err
 	}
 	// Send the data allowance
-	if err := c.sendTunnelAllowance(tun.id, tunnelBuffer); err != nil {
+	if err := c.sendTunnelAllowance(tun.id, defaultTunnelBuffer); err != nil {
 		c.tunLock.Lock()
 		delete(c.tunLive, tun.id)
 		c.tunLock.Unlock()

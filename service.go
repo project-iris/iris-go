@@ -81,7 +81,7 @@ func (s *Service) Unregister() error {
 	// Tear-down the connection
 	err := s.conn.Close()
 
-	// Stop all the thread pools
+	// Stop all the thread pools (drop unprocessed messages)
 	s.conn.reqPool.Terminate(true)
 	s.conn.bcastPool.Terminate(true)
 
