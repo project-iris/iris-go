@@ -41,8 +41,7 @@ type ServiceHandler interface {
 
 // Service instance belonging to a particular cluster in the network.
 type Service struct {
-	conn *Connection    // Network connection to the local Iris relay
-	hand ServiceHandler // Handler for inbound messages
+	conn *Connection // Network connection to the local Iris relay
 }
 
 // Connects to the Iris network and registers a new service instance as a member
@@ -63,9 +62,8 @@ func Register(port int, cluster string, handler ServiceHandler, limits *ServiceL
 	// Assemble the service object and initialize it
 	serv := &Service{
 		conn: conn,
-		hand: handler,
 	}
-	if err := serv.hand.Init(conn); err != nil {
+	if err := handler.Init(conn); err != nil {
 		conn.Close()
 		return nil, err
 	}
