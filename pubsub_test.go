@@ -17,22 +17,24 @@ import (
 )
 
 // Service handler for the publish/subscribe tests.
-type pubsubTestServiceHandler struct {
+type publishTestServiceHandler struct {
 	conn *Connection
 }
 
-func (p *pubsubTestServiceHandler) Init(conn *Connection) error              { p.conn = conn; return nil }
-func (p *pubsubTestServiceHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
-func (p *pubsubTestServiceHandler) HandleRequest(req []byte) ([]byte, error) { panic("not implemented") }
-func (p *pubsubTestServiceHandler) HandleTunnel(tun *Tunnel)                 { panic("not implemented") }
-func (p *pubsubTestServiceHandler) HandleDrop(reason error)                  { panic("not implemented") }
+func (p *publishTestServiceHandler) Init(conn *Connection) error { p.conn = conn; return nil }
+func (p *publishTestServiceHandler) HandleBroadcast(msg []byte)  { panic("not implemented") }
+func (p *publishTestServiceHandler) HandleRequest(req []byte) ([]byte, error) {
+	panic("not implemented")
+}
+func (p *publishTestServiceHandler) HandleTunnel(tun *Tunnel) { panic("not implemented") }
+func (p *publishTestServiceHandler) HandleDrop(reason error)  { panic("not implemented") }
 
 // Topic handler for the publish/subscribe tests.
-type pubsubTestTopicHandler struct {
+type publishTestTopicHandler struct {
 	delivers chan []byte
 }
 
-func (p *pubsubTestTopicHandler) HandleEvent(event []byte) { p.delivers <- event }
+func (p *publishTestTopicHandler) HandleEvent(event []byte) { p.delivers <- event }
 
 // Multiple connections subscribe to the same batch of topics and publish to all.
 func TestPublish(t *testing.T) {
@@ -68,9 +70,9 @@ func TestPublish(t *testing.T) {
 			defer conn.Close()
 
 			// Subscribe to the batch of topics
-			hands := []*pubsubTestTopicHandler{}
+			hands := []*publishTestTopicHandler{}
 			for _, topic := range topics {
-				hand := &pubsubTestTopicHandler{
+				hand := &publishTestTopicHandler{
 					delivers: make(chan []byte, (conf.clients+conf.servers)*conf.events),
 				}
 				if err := conn.Subscribe(topic, hand, nil); err != nil {
@@ -113,7 +115,7 @@ func TestPublish(t *testing.T) {
 			defer shutdown.Done()
 
 			// Create the service handler
-			handler := new(pubsubTestServiceHandler)
+			handler := new(publishTestServiceHandler)
 
 			// Register a new service to the relay
 			serv, err := Register(config.relay, config.cluster, handler, nil)
@@ -124,9 +126,9 @@ func TestPublish(t *testing.T) {
 			defer serv.Unregister()
 
 			// Subscribe to the batch of topics
-			hands := []*pubsubTestTopicHandler{}
+			hands := []*publishTestTopicHandler{}
 			for _, topic := range topics {
-				hand := &pubsubTestTopicHandler{
+				hand := &publishTestTopicHandler{
 					delivers: make(chan []byte, (conf.clients+conf.servers)*conf.events),
 				}
 				if err := handler.conn.Subscribe(topic, hand, nil); err != nil {
@@ -177,7 +179,7 @@ func TestPublish(t *testing.T) {
 }
 
 // Verifies the delivered topic events.
-func publishVerifyEvents(clients, servers, publishes int, hands []*pubsubTestTopicHandler) error {
+func publishVerifyEvents(clients, servers, publishes int, hands []*publishTestTopicHandler) error {
 	// Verify each topic handler separately
 	for i := 0; i < len(hands); i++ {
 		// Retrieve all the published events
@@ -213,6 +215,118 @@ func publishVerifyEvents(clients, servers, publishes int, hands []*pubsubTestTop
 	return nil
 }
 
+// Topic handler for the publish/subscribe limit tests.
+type publishLimitTestTopicHandler struct {
+	delivers chan []byte
+	sleep    time.Duration
+}
+
+func (p *publishLimitTestTopicHandler) HandleEvent(event []byte) {
+	time.Sleep(p.sleep)
+	p.delivers <- event
+}
+
+// Tests the topic subscription thread limitation.
+func TestPublishThreadLimit(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		messages int
+		sleep    time.Duration
+	}{4, 100 * time.Millisecond}
+
+	// Connect to the local relay
+	conn, err := Connect(config.relay)
+	if err != nil {
+		t.Fatalf("connection failed: %v", err)
+	}
+	defer conn.Close()
+
+	// Subscribe to a topic and wait for state propagation
+	handler := &publishLimitTestTopicHandler{
+		delivers: make(chan []byte, conf.messages),
+		sleep:    conf.sleep,
+	}
+	limits := &TopicLimits{EventThreads: 1}
+
+	if err := conn.Subscribe(config.topic, handler, limits); err != nil {
+		t.Fatalf("subscription failed: %v", err)
+	}
+	defer conn.Unsubscribe(config.topic)
+	time.Sleep(100 * time.Millisecond)
+
+	// Send a few publishes
+	for i := 0; i < conf.messages; i++ {
+		if err := conn.Publish(config.topic, []byte{byte(i)}); err != nil {
+			t.Fatalf("event publish failed: %v.", err)
+		}
+	}
+	// Wait for half time and verify that only half was processed
+	time.Sleep(time.Duration(conf.messages/2)*conf.sleep + conf.sleep/2)
+	for i := 0; i < conf.messages/2; i++ {
+		select {
+		case <-handler.delivers:
+		default:
+			t.Errorf("event #%d not received", i)
+		}
+	}
+	select {
+	case <-handler.delivers:
+		t.Errorf("additional event received")
+	default:
+	}
+}
+
+// Tests the subscription memory limitation.
+func TestPublishMemoryLimit(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		messages int
+		sleep    time.Duration
+	}{4, 100 * time.Millisecond}
+
+	// Connect to the local relay
+	conn, err := Connect(config.relay)
+	if err != nil {
+		t.Fatalf("connection failed: %v", err)
+	}
+	defer conn.Close()
+
+	// Subscribe to a topic and wait for state propagation
+	handler := &publishTestTopicHandler{
+		delivers: make(chan []byte, conf.messages),
+	}
+	limits := &TopicLimits{
+		EventThreads: 1,
+		EventMemory:  1,
+	}
+	if err := conn.Subscribe(config.topic, handler, limits); err != nil {
+		t.Fatalf("subscription failed: %v", err)
+	}
+	defer conn.Unsubscribe(config.topic)
+	time.Sleep(100 * time.Millisecond)
+
+	// Check that a 1 byte publish passes
+	if err := conn.Publish(config.topic, []byte{0x00}); err != nil {
+		t.Fatalf("small publish failed: %v.", err)
+	}
+	time.Sleep(time.Millisecond)
+	select {
+	case <-handler.delivers:
+	default:
+		t.Fatalf("small publish not received.")
+	}
+	// Check that a 2 byte publish is dropped
+	if err := conn.Publish(config.topic, []byte{0x00, 0x00}); err != nil {
+		t.Fatalf("large publish failed: %v.", err)
+	}
+	time.Sleep(time.Millisecond)
+	select {
+	case <-handler.delivers:
+		t.Fatalf("large publish received.")
+	default:
+	}
+}
+
 // Benchmarks the latency of a single publish operation.
 func BenchmarkPublishLatency(b *testing.B) {
 	// Connect to the local relay
@@ -223,7 +337,7 @@ func BenchmarkPublishLatency(b *testing.B) {
 	defer conn.Close()
 
 	// Subscribe to a topic and wait for state propagation
-	handler := &pubsubTestTopicHandler{
+	handler := &publishTestTopicHandler{
 		delivers: make(chan []byte, b.N),
 	}
 	if err := conn.Subscribe(config.topic, handler, nil); err != nil {
@@ -286,7 +400,7 @@ func benchmarkPublishThroughput(threads int, b *testing.B) {
 	defer conn.Close()
 
 	// Subscribe to a topic and wait for state propagation
-	handler := &pubsubTestTopicHandler{
+	handler := &publishTestTopicHandler{
 		delivers: make(chan []byte, b.N),
 	}
 	if err := conn.Subscribe(config.topic, handler, nil); err != nil {
