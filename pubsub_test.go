@@ -295,10 +295,8 @@ func TestPublishMemoryLimit(t *testing.T) {
 	handler := &publishTestTopicHandler{
 		delivers: make(chan []byte, conf.messages),
 	}
-	limits := &TopicLimits{
-		EventThreads: 1,
-		EventMemory:  1,
-	}
+	limits := &TopicLimits{EventMemory: 1}
+
 	if err := conn.Subscribe(config.topic, handler, limits); err != nil {
 		t.Fatalf("subscription failed: %v", err)
 	}

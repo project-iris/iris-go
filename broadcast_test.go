@@ -211,10 +211,8 @@ func TestBroadcastMemoryLimit(t *testing.T) {
 	handler := &broadcastTestHandler{
 		delivers: make(chan []byte, 1),
 	}
-	limits := &ServiceLimits{
-		BroadcastThreads: 1,
-		BroadcastMemory:  1,
-	}
+	limits := &ServiceLimits{BroadcastMemory: 1}
+
 	// Register a new service to the relay
 	serv, err := Register(config.relay, config.cluster, handler, limits)
 	if err != nil {

@@ -156,19 +156,46 @@ func TestRequestFail(t *testing.T) {
 }
 
 // Service handler for the request/reply limit tests.
-type requestLimitTestHandler struct {
+type requestTestTimedHandler struct {
 	conn  *Connection
 	sleep time.Duration
 }
 
-func (r *requestLimitTestHandler) Init(conn *Connection) error { r.conn = conn; return nil }
-func (r *requestLimitTestHandler) HandleBroadcast(msg []byte)  { panic("not implemented") }
-func (r *requestLimitTestHandler) HandleTunnel(tun *Tunnel)    { panic("not implemented") }
-func (r *requestLimitTestHandler) HandleDrop(reason error)     { panic("not implemented") }
+func (r *requestTestTimedHandler) Init(conn *Connection) error { r.conn = conn; return nil }
+func (r *requestTestTimedHandler) HandleBroadcast(msg []byte)  { panic("not implemented") }
+func (r *requestTestTimedHandler) HandleTunnel(tun *Tunnel)    { panic("not implemented") }
+func (r *requestTestTimedHandler) HandleDrop(reason error)     { panic("not implemented") }
 
-func (r *requestLimitTestHandler) HandleRequest(req []byte) ([]byte, error) {
+func (r *requestTestTimedHandler) HandleRequest(req []byte) ([]byte, error) {
 	time.Sleep(r.sleep)
 	return req, nil
+}
+
+// Tests the request timeouts.
+func TestRequestTimeout(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		sleep time.Duration
+	}{25 * time.Millisecond}
+
+	// Create the service handler
+	handler := &requestTestTimedHandler{
+		sleep: conf.sleep,
+	}
+	// Register a new service to the relay
+	serv, err := Register(config.relay, config.cluster, handler, nil)
+	if err != nil {
+		t.Fatalf("registration failed: %v.", err)
+	}
+	defer serv.Unregister()
+
+	// Check that the timeouts are complied with.
+	if _, err := handler.conn.Request(config.cluster, []byte{0x00}, conf.sleep*2); err != nil {
+		t.Fatalf("longer timeout failed: %v.", err)
+	}
+	if rep, err := handler.conn.Request(config.cluster, []byte{0x00}, conf.sleep/2); err == nil {
+		t.Fatalf("shorter timeout succeeded: %v.", rep)
+	}
 }
 
 // Tests the request thread limitation.
@@ -180,7 +207,7 @@ func TestRequestThreadLimit(t *testing.T) {
 	}{4, 25 * time.Millisecond}
 
 	// Create the service handler and limiter
-	handler := &requestLimitTestHandler{
+	handler := &requestTestTimedHandler{
 		sleep: conf.sleep,
 	}
 	limits := &ServiceLimits{RequestThreads: 1}
@@ -231,10 +258,8 @@ func TestRequestThreadLimit(t *testing.T) {
 func TestRequestMemoryLimit(t *testing.T) {
 	// Create the service handler and limiter
 	handler := new(requestTestHandler)
-	limits := &ServiceLimits{
-		RequestThreads: 1,
-		RequestMemory:  1,
-	}
+	limits := &ServiceLimits{RequestMemory: 1}
+
 	// Register a new service to the relay
 	serv, err := Register(config.relay, config.cluster, handler, limits)
 	if err != nil {
