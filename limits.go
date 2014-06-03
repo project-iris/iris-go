@@ -38,5 +38,5 @@ var defaultTopicLimits = TopicLimits{
 	EventMemory:  64 * 1024 * 1024,
 }
 
-// Size of a tunnel's input buffer
+// Size of a tunnel's input buffer.
 var defaultTunnelBuffer = 64 * 1024 * 1024

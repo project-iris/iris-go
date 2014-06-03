@@ -21,7 +21,7 @@ type tunnelTestHandler struct {
 
 func (t *tunnelTestHandler) Init(conn *Connection) error              { t.conn = conn; return nil }
 func (t *tunnelTestHandler) HandleBroadcast(msg []byte)               { panic("not implemented") }
-func (t *tunnelTestHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
+func (t *tunnelTestHandler) HandleRequest(req []byte) ([]byte, error) { panic("not implemented") }
 func (t *tunnelTestHandler) HandleDrop(reason error)                  { panic("not implemented") }
 
 func (t *tunnelTestHandler) HandleTunnel(tun *Tunnel) {
@@ -72,7 +72,7 @@ func TestTunnel(t *testing.T) {
 
 			// Execute the tunnel construction, message exchange and verification
 			id := fmt.Sprintf("client #%d", client)
-			if err := tunnelBuildExhangeVerify(id, conn, conf.tunnels, conf.exchanges); err != nil {
+			if err := tunnelBuildExchangeVerify(id, conn, conf.tunnels, conf.exchanges); err != nil {
 				barrier.Exit(fmt.Errorf("exchanges failed: %v", err))
 				return
 			}
@@ -99,7 +99,7 @@ func TestTunnel(t *testing.T) {
 
 			// Execute the tunnel construction, message exchange and verification
 			id := fmt.Sprintf("server #%d", server)
-			if err := tunnelBuildExhangeVerify(id, handler.conn, conf.tunnels, conf.exchanges); err != nil {
+			if err := tunnelBuildExchangeVerify(id, handler.conn, conf.tunnels, conf.exchanges); err != nil {
 				barrier.Exit(fmt.Errorf("exchanges failed: %v", err))
 				return
 			}
@@ -118,7 +118,7 @@ func TestTunnel(t *testing.T) {
 }
 
 // Opens a batch of concurrent tunnels, and executes a data exchange.
-func tunnelBuildExhangeVerify(id string, conn *Connection, tunnels, exchanges int) error {
+func tunnelBuildExchangeVerify(id string, conn *Connection, tunnels, exchanges int) error {
 	barrier := newBarrier(tunnels)
 	for i := 0; i < tunnels; i++ {
 		go func(tunnel int) {
@@ -158,6 +158,21 @@ func tunnelBuildExhangeVerify(id string, conn *Connection, tunnels, exchanges in
 		return fmt.Errorf("%v", errs)
 	}
 	return nil
+}
+
+// Tests that unanswered tunnels timeout correctly.
+func TestTunnelTimeout(t *testing.T) {
+	// Connect to the local relay
+	conn, err := Connect(config.relay)
+	if err != nil {
+		t.Fatalf("connection failed: %v", err)
+	}
+	defer conn.Close()
+
+	// Open a new tunnel to a non existent server
+	if tun, err := conn.Tunnel(config.cluster, 100*time.Millisecond); err != ErrTimeout {
+		t.Fatalf("mismatching tunneling result: have %v/%v, want %v/%v", tun, err, nil, ErrTimeout)
+	}
 }
 
 // Tests that large messages get delivered properly.
