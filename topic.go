@@ -7,7 +7,6 @@
 package iris
 
 import (
-	"log"
 	"sync/atomic"
 
 	"github.com/project-iris/iris/pool"
@@ -29,6 +28,7 @@ type topic struct {
 	// Quality of service fields
 	limits *TopicLimits // Limits on the inbound message processing
 
+	eventIdx  uint64           // Index to assign to inbound events for logging purposes
 	eventPool *pool.ThreadPool // Queue and concurrency limiter for the event handlers
 	eventUsed int32            // Actual memory usage of the event queue
 
@@ -75,19 +75,24 @@ func finalizeTopicLimits(user *TopicLimits) *TopicLimits {
 
 // Schedules a topic event for the subscription handler to process.
 func (t *topic) handlePublish(event []byte) {
+	id := int(atomic.AddUint64(&t.eventIdx, 1))
+	t.logger.Debug("scheduling arrived event", "event", id, "data", logLazyBlob(event))
+
 	// Make sure there is enough memory for the event
-	if int(atomic.LoadInt32(&t.eventUsed))+len(event) <= t.limits.EventMemory {
+	used := int(atomic.LoadInt32(&t.eventUsed)) // Safe, since only 1 thread increments!
+	if used+len(event) <= t.limits.EventMemory {
 		// Increment the memory usage of the queue and schedule the event
 		atomic.AddInt32(&t.eventUsed, int32(len(event)))
 		t.eventPool.Schedule(func() {
 			// Start the processing by decrementing the memory usage
 			atomic.AddInt32(&t.eventUsed, -int32(len(event)))
+			t.logger.Debug("handling scheduled event", "event", id)
 			t.handler.HandleEvent(event)
 		})
 		return
 	}
 	// Not enough memory in the event queue
-	log.Printf("memory allowance exceeded, event dropped.")
+	t.logger.Error("event exceeded memory allowance", "event", id, "limit", t.limits.EventMemory, "used", used, "size", len(event))
 }
 
 // Terminates a topic subscription's internal processing pool.

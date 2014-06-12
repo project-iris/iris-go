@@ -39,6 +39,7 @@ type Connection struct {
 	// Quality of service fields
 	limits *ServiceLimits // Limits on the inbound message processing
 
+	bcastIdx  uint64           // Index to assign the next inbound broadcast (logging purposes)
 	bcastPool *pool.ThreadPool // Queue and concurrency limiter for the broadcast handlers
 	bcastUsed int32            // Actual memory usage of the broadcast queue
 
@@ -137,6 +138,7 @@ func (c *Connection) Broadcast(cluster string, message []byte) error {
 		return errors.New("nil message")
 	}
 	// Broadcast and return
+	c.logger.Debug("sending new broadcast", "cluster", cluster, "data", logLazyBlob(message))
 	return c.sendBroadcast(cluster, message)
 }
 
@@ -177,18 +179,22 @@ func (c *Connection) Request(cluster string, request []byte, timeout time.Durati
 		c.reqLock.Unlock()
 	}()
 	// Send the request
+	c.logger.Debug("sending new request", "local_request", reqId, "cluster", cluster, "data", logLazyBlob(request), "timeout", timeout)
 	if err := c.sendRequest(reqId, cluster, request, timeoutms); err != nil {
 		return nil, err
 	}
 	// Retrieve the results or fail if terminating
+	var reply []byte
+	var err error
+
 	select {
 	case <-c.term:
-		return nil, ErrClosed
-	case reply := <-repc:
-		return reply, nil
-	case err := <-errc:
-		return nil, err
+		err = ErrClosed
+	case reply = <-repc:
+	case err = <-errc:
 	}
+	c.logger.Debug("request completed", "local_request", reqId, "data", logLazyBlob(reply), "error", err)
+	return reply, err
 }
 
 // Subscribes to a topic, using handler as the callback for arriving events.
@@ -207,18 +213,18 @@ func (c *Connection) Subscribe(topic string, handler TopicHandler, limits *Topic
 	// Make sure the subscription limits have valid values
 	limits = finalizeTopicLimits(limits)
 
-	logger := c.logger.New("topic", topic)
-	logger.Info("subscribing to new topic",
-		"limits", log15.Lazy{func() string {
-			return fmt.Sprintf("%dT|%dB", limits.EventThreads, limits.EventMemory)
-		}})
-
 	// Subscribe locally
 	c.subLock.Lock()
 	if _, ok := c.subLive[topic]; ok {
 		c.subLock.Unlock()
 		return errors.New("already subscribed")
 	}
+	logger := c.logger.New("topic", topic)
+	logger.Info("subscribing to new topic",
+		"limits", log15.Lazy{func() string {
+			return fmt.Sprintf("%dT|%dB", limits.EventThreads, limits.EventMemory)
+		}})
+
 	c.subLive[topic] = newTopic(handler, limits, logger)
 	c.subLock.Unlock()
 
@@ -248,6 +254,7 @@ func (c *Connection) Publish(topic string, event []byte) error {
 		return errors.New("nil event")
 	}
 	// Publish and return
+	c.logger.Debug("publishing new event", "topic", topic, "data", logLazyBlob(event))
 	return c.sendPublish(topic, event)
 }
 
@@ -290,16 +297,8 @@ func (c *Connection) Unsubscribe(topic string) error {
 //
 // The timeout unit is in milliseconds. Anything lower will fail with an error.
 func (c *Connection) Tunnel(cluster string, timeout time.Duration) (*Tunnel, error) {
-	// Sanity check on the arguments
-	if len(cluster) == 0 {
-		return nil, errors.New("empty cluster identifier")
-	}
-	timeoutms := int(timeout.Nanoseconds() / 1000000)
-	if timeoutms < 1 {
-		return nil, fmt.Errorf("invalid timeout %v < 1ms", timeout)
-	}
 	// Simple call indirection to move into the tunnel source file
-	return c.initTunnel(cluster, timeoutms)
+	return c.initTunnel(cluster, timeout)
 }
 
 // Gracefully terminates the connection removing all subscriptions and closing
@@ -320,6 +319,7 @@ func (c *Connection) Close() error {
 	// Terminate all running subscription handlers
 	c.subLock.Lock()
 	for _, topic := range c.subLive {
+		topic.logger.Warn("forcefully terminating subscription")
 		topic.terminate()
 	}
 	c.subLock.Unlock()

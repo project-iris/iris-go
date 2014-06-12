@@ -10,49 +10,61 @@ package iris
 
 import (
 	"errors"
-	"log"
 	"sync/atomic"
 )
 
 // Schedules an application broadcast message for the service handler to process.
 func (c *Connection) handleBroadcast(message []byte) {
+	id := int(atomic.AddUint64(&c.bcastIdx, 1))
+	c.logger.Debug("scheduling arrived broadcast", "broadcast", id, "data", logLazyBlob(message))
+
 	// Make sure there is enough memory for the message
-	if int(atomic.LoadInt32(&c.bcastUsed))+len(message) <= c.limits.BroadcastMemory {
+	used := int(atomic.LoadInt32(&c.bcastUsed)) // Safe, since only 1 thread increments!
+	if used+len(message) <= c.limits.BroadcastMemory {
 		// Increment the memory usage of the queue and schedule the broadcast
 		atomic.AddInt32(&c.bcastUsed, int32(len(message)))
 		c.bcastPool.Schedule(func() {
 			// Start the processing by decrementing the memory usage
 			atomic.AddInt32(&c.bcastUsed, -int32(len(message)))
+			c.logger.Debug("handling scheduled broadcast", "broadcast", id)
 			c.handler.HandleBroadcast(message)
 		})
 		return
 	}
 	// Not enough memory in the broadcast queue
-	log.Printf("memory allowance exceeded, broadcast dropped.")
+	c.logger.Error("broadcast exceeded memory allowance", "broadcast", id, "limit", c.limits.BroadcastMemory, "used", used, "size", len(message))
 }
 
 // Schedules an application request for the service handler to process.
 func (c *Connection) handleRequest(id uint64, request []byte, timeout int) {
+	logger := c.logger.New("remote_request", id)
+	logger.Debug("scheduling arrived request", "remote_request", id, "data", logLazyBlob(request), "timeout", timeout)
+
 	// Make sure there is enough memory for the request
-	if int(atomic.LoadInt32(&c.reqUsed))+len(request) <= c.limits.RequestMemory {
+	used := int(atomic.LoadInt32(&c.reqUsed)) // Safe, since only 1 thread increments!
+	if used+len(request) <= c.limits.RequestMemory {
 		// Increment the memory usage of the queue and schedule the request
 		atomic.AddInt32(&c.reqUsed, int32(len(request)))
 		c.reqPool.Schedule(func() {
 			// Start the processing by decrementing the memory usage
 			atomic.AddInt32(&c.reqUsed, -int32(len(request)))
 
-			reply, fault := c.handler.HandleRequest(request)
-			if fault == nil {
-				fault = errors.New("")
+			logger.Debug("handling scheduled request")
+			reply, err := c.handler.HandleRequest(request)
+			fault := ""
+			if err != nil {
+				fault = err.Error()
 			}
-			if err := c.sendReply(id, reply, fault.Error()); err != nil {
-				log.Printf("iris: failed to send reply: %v.", err)
+
+			logger.Debug("replying to handled request", "data", logLazyBlob(reply), "error", err)
+			if err := c.sendReply(id, reply, fault); err != nil {
+				logger.Error("failed to send reply", "reason", err)
 			}
 		})
 		return
 	}
 	// Not enough memory in the request queue
-	log.Printf("memory allowance exceeded, request dropped.")
+	logger.Error("request exceeded memory allowance", "limit", c.limits.RequestMemory, "used", used, "size", len(request))
 }
 
 // Looks up a pending request and delivers the result.
@@ -80,7 +92,7 @@ func (c *Connection) handlePublish(topic string, event []byte) {
 	if ok {
 		top.handlePublish(event)
 	} else {
-		log.Printf("iris: stale publish arrived on: %v.", topic)
+		c.logger.Warn("stale publish arrived", "topic", topic)
 	}
 }
 
@@ -88,6 +100,7 @@ func (c *Connection) handlePublish(topic string, event []byte) {
 func (c *Connection) handleClose(reason error) {
 	// Notify the client of the drop if premature
 	if reason != nil {
+		c.logger.Crit("connection dropped", "reason", reason)
 		c.handler.HandleDrop(reason)
 	}
 	// Close all open tunnels
@@ -103,9 +116,8 @@ func (c *Connection) handleClose(reason error) {
 func (c *Connection) handleTunnelInit(id uint64, chunkLimit int) {
 	if tun, err := c.acceptTunnel(id, chunkLimit); err == nil {
 		c.handler.HandleTunnel(tun)
-	} else {
-		log.Printf("iris: failed to accept inbound tunnel: %v.", err)
 	}
+	// Else: failure already logged by the acceptor
 }
 
 // Forwards the tunnel construction result to the requested tunnel.

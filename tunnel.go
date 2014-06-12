@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/project-iris/iris/container/queue"
+	"gopkg.in/inconshreveable/log15.v2"
 )
 
 // Communication stream between the local application and a remote endpoint. The
@@ -39,6 +40,8 @@ type Tunnel struct {
 	init chan bool     // Initialization channel for outbound tunnels
 	term chan struct{} // Channel to signal termination to blocked go-routines
 	stat error         // Failure reason, if any received
+
+	logger log15.Logger // Logger with connection and tunnel ids injected
 }
 
 func (c *Connection) newTunnel() (*Tunnel, error) {
@@ -64,6 +67,8 @@ func (c *Connection) newTunnel() (*Tunnel, error) {
 
 		init: make(chan bool),
 		term: make(chan struct{}),
+
+		logger: c.logger.New("tunnel", tunId),
 	}
 	c.tunLive[tunId] = tun
 
@@ -71,14 +76,24 @@ func (c *Connection) newTunnel() (*Tunnel, error) {
 }
 
 // Initiates a new tunnel to a remote cluster.
-func (c *Connection) initTunnel(cluster string, timeout int) (*Tunnel, error) {
+func (c *Connection) initTunnel(cluster string, timeout time.Duration) (*Tunnel, error) {
+	// Sanity check on the arguments
+	if len(cluster) == 0 {
+		return nil, errors.New("empty cluster identifier")
+	}
+	timeoutms := int(timeout.Nanoseconds() / 1000000)
+	if timeoutms < 1 {
+		return nil, fmt.Errorf("invalid timeout %v < 1ms", timeout)
+	}
 	// Create a potential tunnel
 	tun, err := c.newTunnel()
 	if err != nil {
 		return nil, err
 	}
+	tun.logger.Info("constructing outbound tunnel", "cluster", cluster, "timeout", timeout)
+
 	// Try and construct the tunnel
-	err = c.sendTunnelInit(tun.id, cluster, timeout)
+	err = c.sendTunnelInit(tun.id, cluster, timeoutms)
 	if err == nil {
 		// Wait for tunneling completion or a timeout
 		select {
@@ -86,6 +101,7 @@ func (c *Connection) initTunnel(cluster string, timeout int) (*Tunnel, error) {
 			if init {
 				// Send the data allowance
 				if err = c.sendTunnelAllowance(tun.id, defaultTunnelBuffer); err == nil {
+					tun.logger.Info("tunnel construction completed", "chunk_limit", tun.chunkLimit)
 					return tun, nil
 				}
 			} else {
@@ -100,6 +116,7 @@ func (c *Connection) initTunnel(cluster string, timeout int) (*Tunnel, error) {
 	delete(c.tunLive, tun.id)
 	c.tunLock.Unlock()
 
+	tun.logger.Warn("tunnel construction failed", "reason", err)
 	return nil, err
 }
 
@@ -111,22 +128,24 @@ func (c *Connection) acceptTunnel(initId uint64, chunkLimit int) (*Tunnel, error
 		return nil, err
 	}
 	tun.chunkLimit = chunkLimit
+	tun.logger.Info("accepting inbound tunnel", "chunk_limit", chunkLimit)
 
 	// Confirm the tunnel creation to the relay node
-	if err := c.sendTunnelConfirm(initId, tun.id); err != nil {
-		c.tunLock.Lock()
-		delete(c.tunLive, tun.id)
-		c.tunLock.Unlock()
-		return nil, err
+	err = c.sendTunnelConfirm(initId, tun.id)
+	if err == nil {
+		// Send the data allowance
+		err = c.sendTunnelAllowance(tun.id, defaultTunnelBuffer)
+		if err == nil {
+			tun.logger.Info("tunnel acceptance completed")
+			return tun, nil
+		}
 	}
-	// Send the data allowance
-	if err := c.sendTunnelAllowance(tun.id, defaultTunnelBuffer); err != nil {
-		c.tunLock.Lock()
-		delete(c.tunLive, tun.id)
-		c.tunLock.Unlock()
-		return nil, err
-	}
-	return tun, nil
+	c.tunLock.Lock()
+	delete(c.tunLive, tun.id)
+	c.tunLock.Unlock()
+
+	tun.logger.Warn("tunnel acceptance failed", "reason", err)
+	return nil, err
 }
 
 // Sends a message over the tunnel to the remote pair, blocking until the local
@@ -134,6 +153,8 @@ func (c *Connection) acceptTunnel(initId uint64, chunkLimit int) (*Tunnel, error
 //
 // Infinite blocking is supported with by setting the timeout to zero (0).
 func (t *Tunnel) Send(message []byte, timeout time.Duration) error {
+	t.logger.Debug("sending message", "data", logLazyBlob(message), "timeout", logLazyTimeout(timeout))
+
 	// Sanity check on the arguments
 	if message == nil {
 		return errors.New("nil message")
@@ -235,6 +256,8 @@ func (t *Tunnel) fetchMessage() []byte {
 	if !t.itoaBuf.Empty() {
 		message := t.itoaBuf.Pop().([]byte)
 		go t.conn.sendTunnelAllowance(t.id, len(message))
+
+		t.logger.Debug("fetching queued message", "data", logLazyBlob(message))
 		return message
 	}
 	// No message, reset arrival flag
@@ -257,6 +280,7 @@ func (t *Tunnel) Close() error {
 	default:
 	}
 	// Signal the relay and wait for closure
+	t.logger.Info("closing tunnel")
 	if err := t.conn.sendTunnelClose(t.id); err != nil {
 		return err
 	}
@@ -290,6 +314,8 @@ func (t *Tunnel) handleTransfer(size int, chunk []byte) {
 	// If a new message is arriving, dump anything stored before
 	if size != 0 {
 		if t.chunkBuf != nil {
+			t.logger.Warn("incomplete message discarded", "size", cap(t.chunkBuf), "arrived", len(t.chunkBuf))
+
 			// A large transfer timed out, new started, grant the partials allowance
 			go t.conn.sendTunnelAllowance(t.id, len(t.chunkBuf))
 		}
@@ -301,6 +327,7 @@ func (t *Tunnel) handleTransfer(size int, chunk []byte) {
 		t.itoaLock.Lock()
 		defer t.itoaLock.Unlock()
 
+		t.logger.Debug("queuing arrived message", "data", logLazyBlob(t.chunkBuf))
 		t.itoaBuf.Push(t.chunkBuf)
 		t.chunkBuf = nil
 
@@ -314,7 +341,10 @@ func (t *Tunnel) handleTransfer(size int, chunk []byte) {
 // Handles the graceful remote closure of the tunnel.
 func (t *Tunnel) handleClose(reason string) {
 	if reason != "" {
+		t.logger.Warn("tunnel dropped", "reason", reason)
 		t.stat = fmt.Errorf("remote error: %s", reason)
+	} else {
+		t.logger.Info("tunnel closed gracefully")
 	}
 	close(t.term)
 }
