@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/project-iris/iris/pool"
+	"gopkg.in/inconshreveable/log15.v2"
 )
 
 // Callback interface for processing events from a single subscribed topic.
@@ -30,12 +31,13 @@ type topic struct {
 
 	eventPool *pool.ThreadPool // Queue and concurrency limiter for the event handlers
 	eventUsed int32            // Actual memory usage of the event queue
+
+	// Bookkeeping fields
+	logger log15.Logger
 }
 
 // Creates a new topic subscription.
-func newTopic(handler TopicHandler, limits *TopicLimits) *topic {
-	limits = finalizeTopicLimits(limits)
-
+func newTopic(handler TopicHandler, limits *TopicLimits, logger log15.Logger) *topic {
 	top := &topic{
 		// Application layer
 		handler: handler,
@@ -43,6 +45,9 @@ func newTopic(handler TopicHandler, limits *TopicLimits) *topic {
 		// Quality of service
 		limits:    limits,
 		eventPool: pool.NewThreadPool(limits.EventThreads),
+
+		// Bookkeeping
+		logger: logger,
 	}
 	// Start the event processing and return
 	top.eventPool.Start()

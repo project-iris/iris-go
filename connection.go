@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/project-iris/iris/pool"
+	"gopkg.in/inconshreveable/log15.v2"
 )
 
 // Client connection to the Iris network.
@@ -52,17 +54,29 @@ type Connection struct {
 	init chan struct{}   // Init channel to receive a success signal
 	quit chan chan error // Quit channel to synchronize receiver termination
 	term chan struct{}   // Channel to signal termination to blocked go-routines
+
+	logger log15.Logger
 }
+
+// Id to assign to the next connection (used for logging purposes).
+var nextConnId uint64
 
 // Connects to the Iris network as a simple client.
 func Connect(port int) (*Connection, error) {
-	return newConnection(port, "", nil, nil)
+	logger := Log.New("client", atomic.AddUint64(&nextConnId, 1))
+	logger.Info("connecting new client", "relay_port", port)
+
+	conn, err := newConnection(port, "", nil, nil, logger)
+	if err != nil {
+		logger.Warn("failed to connect new client", "reason", err)
+	} else {
+		logger.Info("client connection established")
+	}
+	return conn, err
 }
 
 // Connects to a local relay endpoint on port and registers as cluster.
-func newConnection(port int, cluster string, handler ServiceHandler, limits *ServiceLimits) (*Connection, error) {
-	limits = finalizeServiceLimits(limits)
-
+func newConnection(port int, cluster string, handler ServiceHandler, limits *ServiceLimits, logger log15.Logger) (*Connection, error) {
 	// Connect to the iris relay node
 	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
@@ -82,12 +96,6 @@ func newConnection(port int, cluster string, handler ServiceHandler, limits *Ser
 		subLive: make(map[string]*topic),
 		tunLive: make(map[uint64]*Tunnel),
 
-		// Quality of service
-		limits: limits,
-
-		bcastPool: pool.NewThreadPool(limits.BroadcastThreads),
-		reqPool:   pool.NewThreadPool(limits.RequestThreads),
-
 		// Network layer
 		sock:    sock,
 		sockBuf: bufio.NewReadWriter(bufio.NewReader(sock), bufio.NewWriter(sock)),
@@ -95,6 +103,14 @@ func newConnection(port int, cluster string, handler ServiceHandler, limits *Ser
 		// Bookkeeping
 		quit: make(chan chan error),
 		term: make(chan struct{}),
+
+		logger: logger,
+	}
+	// Initialize service QoS fields
+	if cluster != "" {
+		conn.limits = limits
+		conn.bcastPool = pool.NewThreadPool(limits.BroadcastThreads)
+		conn.reqPool = pool.NewThreadPool(limits.RequestThreads)
 	}
 	// Initialize the connection and wait for a confirmation
 	if err := conn.sendInit(cluster); err != nil {
@@ -106,31 +122,6 @@ func newConnection(port int, cluster string, handler ServiceHandler, limits *Ser
 	// Start the network receiver and return
 	go conn.process()
 	return conn, nil
-}
-
-// Merges the user requested limits with the defaults.
-func finalizeServiceLimits(user *ServiceLimits) *ServiceLimits {
-	// If the user didn't specify anything, load the full default set
-	if user == nil {
-		return &defaultServiceLimits
-	}
-	// Check each field and merge only non-specified ones
-	limits := new(ServiceLimits)
-	*limits = *user
-
-	if user.BroadcastThreads == 0 {
-		limits.BroadcastThreads = defaultServiceLimits.BroadcastThreads
-	}
-	if user.BroadcastMemory == 0 {
-		limits.BroadcastMemory = defaultServiceLimits.BroadcastMemory
-	}
-	if user.RequestThreads == 0 {
-		limits.RequestThreads = defaultServiceLimits.RequestThreads
-	}
-	if user.RequestMemory == 0 {
-		limits.RequestMemory = defaultServiceLimits.RequestMemory
-	}
-	return limits
 }
 
 // Broadcasts a message to all members of a cluster. No guarantees are made that
@@ -213,13 +204,22 @@ func (c *Connection) Subscribe(topic string, handler TopicHandler, limits *Topic
 	if handler == nil {
 		return errors.New("nil subscription handler")
 	}
+	// Make sure the subscription limits have valid values
+	limits = finalizeTopicLimits(limits)
+
+	logger := c.logger.New("topic", topic)
+	logger.Info("subscribing to new topic",
+		"limits", log15.Lazy{func() string {
+			return fmt.Sprintf("%dT|%dB", limits.EventThreads, limits.EventMemory)
+		}})
+
 	// Subscribe locally
 	c.subLock.Lock()
 	if _, ok := c.subLive[topic]; ok {
 		c.subLock.Unlock()
 		return errors.New("already subscribed")
 	}
-	c.subLive[topic] = newTopic(handler, limits)
+	c.subLive[topic] = newTopic(handler, limits, logger)
 	c.subLock.Unlock()
 
 	// Send the subscription request
@@ -259,6 +259,13 @@ func (c *Connection) Unsubscribe(topic string) error {
 	if len(topic) == 0 {
 		return errors.New("empty topic identifier")
 	}
+	// Log the unsubscription request
+	c.subLock.RLock()
+	if top, ok := c.subLive[topic]; ok {
+		top.logger.Info("unsubscribing from topic")
+	}
+	c.subLock.RUnlock()
+
 	// Unsubscribe through the relay and remove if successful
 	err := c.sendUnsubscribe(topic)
 	if err == nil {
@@ -300,6 +307,8 @@ func (c *Connection) Tunnel(cluster string, timeout time.Duration) (*Tunnel, err
 //
 // The call blocks until the connection tear-down is confirmed by the Iris node.
 func (c *Connection) Close() error {
+	c.logger.Info("detaching from relay")
+
 	// Send a graceful close to the relay node
 	if err := c.sendClose(); err != nil {
 		return err

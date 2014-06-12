@@ -6,7 +6,13 @@
 
 package iris
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"sync/atomic"
+
+	"gopkg.in/inconshreveable/log15.v2"
+)
 
 // Callback interface for processing inbound messages designated to a particular
 // service instance.
@@ -44,6 +50,9 @@ type Service struct {
 	conn *Connection // Network connection to the local Iris relay
 }
 
+// Id to assign to the next service (used for logging purposes).
+var nextServId uint64
+
 // Connects to the Iris network and registers a new service instance as a member
 // of the specified service cluster.
 func Register(port int, cluster string, handler ServiceHandler, limits *ServiceLimits) (*Service, error) {
@@ -54,9 +63,22 @@ func Register(port int, cluster string, handler ServiceHandler, limits *ServiceL
 	if handler == nil {
 		return nil, errors.New("nil service handler")
 	}
+	// Make sure the service limits have valid values
+	limits = finalizeServiceLimits(limits)
+
+	logger := Log.New("service", atomic.AddUint64(&nextServId, 1))
+	logger.Info("registering new service", "relay_port", port, "cluster", cluster,
+		"broadcast_limits", log15.Lazy{func() string {
+			return fmt.Sprintf("%dT|%dB", limits.BroadcastThreads, limits.BroadcastMemory)
+		}},
+		"request_limits", log15.Lazy{func() string {
+			return fmt.Sprintf("%dT|%dB", limits.RequestThreads, limits.RequestMemory)
+		}})
+
 	// Connect to the Iris relay as a service
-	conn, err := newConnection(port, cluster, handler, limits)
+	conn, err := newConnection(port, cluster, handler, limits, logger)
 	if err != nil {
+		logger.Warn("failed to register new service", "reason", err)
 		return nil, err
 	}
 	// Assemble the service object and initialize it
@@ -64,14 +86,42 @@ func Register(port int, cluster string, handler ServiceHandler, limits *ServiceL
 		conn: conn,
 	}
 	if err := handler.Init(conn); err != nil {
+		logger.Warn("user failed to initialize service", "reason", err)
 		conn.Close()
 		return nil, err
 	}
+	logger.Info("service registration completed")
+
 	// Start the handler pools
 	conn.bcastPool.Start()
 	conn.reqPool.Start()
 
 	return serv, nil
+}
+
+// Merges the user requested limits with the defaults.
+func finalizeServiceLimits(user *ServiceLimits) *ServiceLimits {
+	// If the user didn't specify anything, load the full default set
+	if user == nil {
+		return &defaultServiceLimits
+	}
+	// Check each field and merge only non-specified ones
+	limits := new(ServiceLimits)
+	*limits = *user
+
+	if user.BroadcastThreads == 0 {
+		limits.BroadcastThreads = defaultServiceLimits.BroadcastThreads
+	}
+	if user.BroadcastMemory == 0 {
+		limits.BroadcastMemory = defaultServiceLimits.BroadcastMemory
+	}
+	if user.RequestThreads == 0 {
+		limits.RequestThreads = defaultServiceLimits.RequestThreads
+	}
+	if user.RequestMemory == 0 {
+		limits.RequestMemory = defaultServiceLimits.RequestMemory
+	}
+	return limits
 }
 
 // Unregisters the service instance from the Iris network.
