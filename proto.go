@@ -506,7 +506,7 @@ func (c *Connection) procTunnelInit() error {
 	if err != nil {
 		return err
 	}
-	go c.handleTunnelInit(id, int(chunkLimit))
+	c.handleTunnelInit(id, int(chunkLimit))
 	return nil
 }
 
@@ -521,7 +521,7 @@ func (c *Connection) procTunnelResult() error {
 		return err
 	}
 	if timeout {
-		go c.handleTunnelResult(id, 0)
+		c.handleTunnelResult(id, 0)
 		return nil
 	}
 	// The tunnel didn't time out, proceed
@@ -529,7 +529,7 @@ func (c *Connection) procTunnelResult() error {
 	if err != nil {
 		return err
 	}
-	go c.handleTunnelResult(id, int(chunkLimit))
+	c.handleTunnelResult(id, int(chunkLimit))
 	return nil
 }
 
@@ -543,7 +543,7 @@ func (c *Connection) procTunnelAllowance() error {
 	if err != nil {
 		return err
 	}
-	go c.handleTunnelAllowance(id, int(space))
+	c.handleTunnelAllowance(id, int(space))
 	return nil
 }
 

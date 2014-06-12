@@ -114,10 +114,12 @@ func (c *Connection) handleClose(reason error) {
 
 // Opens a new local tunnel endpoint and binds it to the remote side.
 func (c *Connection) handleTunnelInit(id uint64, chunkLimit int) {
-	if tun, err := c.acceptTunnel(id, chunkLimit); err == nil {
-		c.handler.HandleTunnel(tun)
-	}
-	// Else: failure already logged by the acceptor
+	go func() {
+		if tun, err := c.acceptTunnel(id, chunkLimit); err == nil {
+			c.handler.HandleTunnel(tun)
+		}
+		// Else: failure already logged by the acceptor
+	}()
 }
 
 // Forwards the tunnel construction result to the requested tunnel.
