@@ -11,6 +11,7 @@ package iris
 import (
 	"errors"
 	"sync/atomic"
+	"time"
 )
 
 // Schedules an application broadcast message for the service handler to process.
@@ -36,26 +37,38 @@ func (c *Connection) handleBroadcast(message []byte) {
 }
 
 // Schedules an application request for the service handler to process.
-func (c *Connection) handleRequest(id uint64, request []byte, timeout int) {
+func (c *Connection) handleRequest(id uint64, request []byte, timeout time.Duration) {
 	logger := c.logger.New("remote_request", id)
-	logger.Debug("scheduling arrived request", "remote_request", id, "data", logLazyBlob(request), "timeout", timeout)
+	logger.Debug("scheduling arrived request", "data", logLazyBlob(request), "timeout", timeout)
 
 	// Make sure there is enough memory for the request
 	used := int(atomic.LoadInt32(&c.reqUsed)) // Safe, since only 1 thread increments!
 	if used+len(request) <= c.limits.RequestMemory {
-		// Increment the memory usage of the queue and schedule the request
+		// Increment the memory usage of the queue
 		atomic.AddInt32(&c.reqUsed, int32(len(request)))
+
+		// Create the expiration timer and schedule the request
+		expiration := time.After(timeout)
 		c.reqPool.Schedule(func() {
 			// Start the processing by decrementing the memory usage
 			atomic.AddInt32(&c.reqUsed, -int32(len(request)))
 
+			// Make sure the request didn't expire while enqueued
+			select {
+			case expired := <-expiration:
+				exp := time.Since(expired)
+				logger.Error("dumping expired scheduled request", "scheduled", exp+timeout, "timeout", timeout, "expired", exp)
+				return
+			default:
+				// All ok, continue
+			}
+			// Handle the request and return a reply
 			logger.Debug("handling scheduled request")
 			reply, err := c.handler.HandleRequest(request)
 			fault := ""
 			if err != nil {
 				fault = err.Error()
 			}
-
 			logger.Debug("replying to handled request", "data", logLazyBlob(reply), "error", err)
 			if err := c.sendReply(id, reply, fault); err != nil {
 				logger.Error("failed to send reply", "reason", err)

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -274,6 +275,62 @@ func TestRequestMemoryLimit(t *testing.T) {
 	// Check that a 2 byte request is dropped
 	if rep, err := handler.conn.Request(config.cluster, []byte{0x00, 0x00}, 25*time.Millisecond); err != ErrTimeout {
 		t.Fatalf("large request didn't time out: %v : %v.", rep, err)
+	}
+}
+
+// Service handler for the request/reply expiry tests.
+type requestTestExpiryHandler struct {
+	conn  *Connection
+	sleep time.Duration
+	done  int32
+}
+
+func (r *requestTestExpiryHandler) Init(conn *Connection) error { r.conn = conn; return nil }
+func (r *requestTestExpiryHandler) HandleBroadcast(msg []byte)  { panic("not implemented") }
+func (r *requestTestExpiryHandler) HandleTunnel(tun *Tunnel)    { panic("not implemented") }
+func (r *requestTestExpiryHandler) HandleDrop(reason error)     { panic("not implemented") }
+
+func (r *requestTestExpiryHandler) HandleRequest(req []byte) ([]byte, error) {
+	time.Sleep(r.sleep)
+	atomic.AddInt32(&r.done, 1)
+	return req, nil
+}
+
+// Tests that enqueued but expired requests don't get executed.
+func TestRequestExpiration(t *testing.T) {
+	// Test specific configurations
+	conf := struct {
+		requests int
+		sleep    time.Duration
+	}{4, 25 * time.Millisecond}
+
+	// Create the service handler and limiter
+	handler := &requestTestExpiryHandler{
+		sleep: conf.sleep,
+	}
+	limits := &ServiceLimits{RequestThreads: 1}
+
+	// Register a new service to the relay
+	serv, err := Register(config.relay, config.cluster, handler, limits)
+	if err != nil {
+		t.Fatalf("registration failed: %v.", err)
+	}
+	defer serv.Unregister()
+
+	// Start a batch of concurrent requesters (all but one should be scheduled remotely)
+	var pend sync.WaitGroup
+	for i := 0; i < conf.requests; i++ {
+		pend.Add(1)
+		go func() {
+			defer pend.Done()
+			handler.conn.Request(config.cluster, []byte{0x00}, time.Millisecond)
+		}()
+	}
+	// Wait for all of them to complete and verify that all but 1 expired
+	pend.Wait()
+	time.Sleep(time.Duration(conf.requests+1) * conf.sleep)
+	if done := atomic.LoadInt32(&handler.done); done != 1 {
+		t.Fatalf("executed request count mismatch: have %v, want %v.", done, 1)
 	}
 }
 

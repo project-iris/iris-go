@@ -14,6 +14,7 @@ package iris
 import (
 	"fmt"
 	"io"
+	"time"
 )
 
 // Packet opcodes
@@ -443,7 +444,7 @@ func (c *Connection) procRequest() error {
 	if err != nil {
 		return err
 	}
-	c.handleRequest(id, request, int(timeout))
+	c.handleRequest(id, request, time.Duration(timeout)*time.Millisecond)
 	return nil
 }
 
