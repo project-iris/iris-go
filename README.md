@@ -10,7 +10,7 @@ Iris is an attempt at bringing the simplicity and elegance of cloud computing to
 
 It is a completely decentralized messaging solution for simplifying the design and implementation of cloud services. Among others, Iris features zero-configuration (i.e. start it up and it will do its magic), semantic addressing (i.e. application use textual names to address each other), clusters as units (i.e. automatic load balancing between apps of the same name) and perfect secrecy (i.e. all network traffic is encrypted).
 
-You can find further infos on the [Iris website](http://iris.karalabe.com) and details of the above features in the [core concepts](http://iris.karalabe.com/book/core_concepts) section of [the book of Iris](http://iris.karalabe.com/book). For the scientifically inclined, a small collection of [papers](http://iris.karalabe.com/papers) is also available featuring Iris. Lastly, slides and videos of previously given public talks are published in the [talks](http://iris.karalabe.com/talks) section.
+You can find further infos on the [Iris website](http://iris.karalabe.com) and details of the above features in the [core concepts](http://iris.karalabe.com/book/core_concepts) section of [the book of Iris](http://iris.karalabe.com/book). For the scientifically inclined, a small collection of [papers](http://iris.karalabe.com/papers) is also available featuring Iris. Slides and videos of previously given public presentations are published in the [talks](http://iris.karalabe.com/talks) page.
 
 There is a growing community on Twitter [@iriscmf](https://twitter.com/iriscmf), Google groups [project-iris](https://groups.google.com/group/project-iris) and GitHub [project-iris](https://github.com/project-iris).
 
@@ -43,7 +43,7 @@ The first step to using Iris through any binding is setting up a local _relay_ _
     2014/06/13 18:13:57 main: booting relay service...
     2014/06/13 18:13:57 main: iris successfully booted, listening on port 55555.
 
-Since it generates random credentials, a developer node will not be able to connect with other nodes in the network. However, it provides a quick solution to start developing without needing to configure a network name and associated access key. Should you wish to interconnect multiple nodes, please provide the `-net` and `-rsa` flags.
+Since it generates random credentials, a developer node will not be able to connect with other remote nodes in the network. However, it provides a quick solution to start developing without needing to configure a _network_ _name_ and associated _access_ _key_. Should you wish to interconnect multiple nodes, please provide the `-net` and `-rsa` flags.
 
 ### Attaching to the relay
 
