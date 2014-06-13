@@ -42,8 +42,8 @@ func (b *barrier) Sync() {
 	b.pass.Add(1)
 	b.pend.Done()
 	b.hold.Wait()
-	b.pass.Done()
 	b.pend.Add(1)
+	b.pass.Done()
 	b.cont.Wait()
 }
 
@@ -52,15 +52,17 @@ func (b *barrier) Exit(err error) {
 	if err != nil {
 		b.errc <- err
 	}
+	b.pass.Add(1)
 	b.pend.Done()
 	b.hold.Wait()
+	b.pass.Done()
 }
 
 // Waits for all goroutines to reach the barrier and permits continuation.
 func (b *barrier) Wait() []error {
 	// Wait for all the goroutines to arrive
-	b.cont.Add(1)
 	b.pend.Wait()
+	b.cont.Add(1)
 
 	// Collect all the occurred errors
 	errs := []error{}
