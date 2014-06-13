@@ -419,6 +419,9 @@ func benchmarkPublishThroughput(threads int, b *testing.B) {
 	// Reset timer and benchmark the message transfer
 	b.ResetTimer()
 	workers.Start()
+	for i := 0; i < b.N; i++ {
+		<-handler.delivers
+	}
 	workers.Terminate(false)
 
 	// Stop the timer (don't measure deferred cleanup)
