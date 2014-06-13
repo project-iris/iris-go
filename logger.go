@@ -22,10 +22,10 @@ var Log = log15.New()
 func init() {
 	Log.SetHandler(log15.DiscardHandler())
 
-	//Log.SetHandler(log15.LvlFilterHandler(log15.LvlCrit, log15.StdoutHandler))
-	//Log.SetHandler(log15.LvlFilterHandler(log15.LvlError, log15.StdoutHandler))
-	Log.SetHandler(log15.LvlFilterHandler(log15.LvlInfo, log15.StdoutHandler))
-	//Log.SetHandler(log15.LvlFilterHandler(log15.LvlDebug, log15.StdoutHandler))
+	//Log.SetHandler(log15.LvlFilterHandler(log15.LvlCrit, log15.StderrHandler))
+	//Log.SetHandler(log15.LvlFilterHandler(log15.LvlError, log15.StderrHandler))
+	Log.SetHandler(log15.LvlFilterHandler(log15.LvlInfo, log15.StderrHandler))
+	//Log.SetHandler(log15.LvlFilterHandler(log15.LvlDebug, log15.StderrHandler))
 }
 
 // Creates a lazy value that flattens and truncates a data blob for logging.
