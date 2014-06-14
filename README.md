@@ -30,7 +30,7 @@ Refer to it as _iris_.
   Quickstart
 --------------
 
-The first step to using Iris through any binding is setting up a local [_relay_ _node_](http://iris.karalabe.com/downloads) through which messages can be sent to any participant of the system. You can find detailed infos in the [Run, Forrest, Run](http://iris.karalabe.com/book/run_forrest_run) section of [the book of Iris](http://iris.karalabe.com/book), but a very simple way would be to start a _developer_ node.
+Iris uses a relaying architecture, where client applications do not communicate directly with one another, but instead delegate all messaging operations to a local relay process responsible for transferring the messages to the correct destinations. The first step hence to using Iris through any binding is setting up the local [_relay_ _node_](http://iris.karalabe.com/downloads). You can find detailed infos in the [Run, Forrest, Run](http://iris.karalabe.com/book/run_forrest_run) section of [the book of Iris](http://iris.karalabe.com/book), but a very simple way would be to start a _developer_ node.
 
     > iris -dev
     Entering developer mode
@@ -47,9 +47,19 @@ Since it generates random credentials, a developer node will not be able to conn
 
 ### Attaching to the relay
 
-After successfully booting, the Iris relay will open a _local_ TCP endpoint (port 55555 by default, configurable using `-port`) through which _arbitrarily_ _many_ entities may attach. Each connecting entity may also decide whether it wants to act as a simple _client_ only consuming the services provided by other participants, or a full fledged _service_ also making functionality available to others for consumption.
+After successfully booting, the relay opens a _local_ TCP endpoint (port `55555` by default, configurable using `-port`) through which arbitrarily many entities may attach. Each connecting entity may also decide whether it becomes a simple _client_ only consuming the services provided by other participants, or a full fledged _service_, also making functionality available to others for consumption.
 
-to be continue...
+Connecting as a client can be done trivially by invoking `iris.Connect` with the port number of the local relay's client endpoint. After the attachment is completed, an `iris.Connection` instance is returned through which messaging can commence. A client cannot however receive inbound requests, broadcasts and tunnels, only initiate them.
+
+```go
+conn, err := iris.Connect(55555)
+if err != nil {
+  log.Fatalf("failed to connect to the Iris relay: %v.", err)
+}
+defer conn.Close()
+```
+
+To provide functionality for consumption, an entity needs to register as a service. To be continued...
 
 ### Messaging through Iris
 
