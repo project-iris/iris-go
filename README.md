@@ -120,8 +120,8 @@ defer conn.Close()
 
 conn.Log.Debug("debug entry, hidden by default")
 conn.Log.Info("info entry, client context included")
-conn.Log.Warn("warning entry, client context included", "extra", "some value")
-conn.Log.Crit("critical entry, client context included", "bool", false, "int", 1, "string", "two")
+conn.Log.Warn("warning entry", "extra", "some value")
+conn.Log.Crit("critical entry", "bool", false, "int", 1, "string", "two")
 ```
 
 As you can see below, all log entries have been automatically tagged with the `client` attribute, set to the id of the current connection. Since the default log level is _INFO_, the `conn.Log.Debug` invocation has no effect. Additionally, arbitrarily many key-value pairs may be included in the entry.
@@ -130,8 +130,8 @@ As you can see below, all log entries have been automatically tagged with the `c
 INFO[06-22|18:39:49] connecting new client                    client=1 relay_port=55555
 INFO[06-22|18:39:49] client connection established            client=1
 INFO[06-22|18:39:49] info entry, client context included      client=1
-WARN[06-22|18:39:49] warning entry, client context included   client=1 extra="some value"
-CRIT[06-22|18:39:49] critical entry, client context included  client=1 bool=false int=1 string=two
+WARN[06-22|18:39:49] warning entry                            client=1 extra="some value"
+CRIT[06-22|18:39:49] critical entry                           client=1 bool=false int=1 string=two
 INFO[06-22|18:39:49] detaching from relay                     client=1
 ```
 
