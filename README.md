@@ -59,7 +59,7 @@ if err != nil {
 defer conn.Close()
 ```
 
-To provide functionality for consumption, an entity needs to register as a service. This is slightly more involved, as beside initiating a registration request, it also needs to specify a callback handler to process inbound events. First, the callback handler needs to implement the [`iris.ServiceHandler`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#ServiceHandler) interface. After creating the handler, registration can commence by invoking [`iris.Register`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Register) with the port number of the local relay's client endpoint; the sub-service cluster name this entity will join as a member of; and the handler itself to process inbound messages.
+To provide functionality for consumption, an entity needs to register as a service. This is slightly more involved, as beside initiating a registration request, it also needs to specify a callback handler to process inbound events. First, the callback handler needs to implement the [`iris.ServiceHandler`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#ServiceHandler) interface. After creating the handler, registration can commence by invoking [`iris.Register`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Register) with the port number of the local relay's client endpoint; sub-service cluster this entity will join as a member; and handler itself to process inbound messages.
 
 ```go
 type EchoHandler struct {}
@@ -82,6 +82,23 @@ func main() {
 Upon successful registration, Iris invokes the handler's `Init` method with the live `iris.Connection` object - the service's client connection - through which the service itself can initiate outbound requests. `Init` is called only once and is synchronized before any other handler method is invoked.
 
 ### Messaging through Iris
+
+Iris supports four messaging schemes: broadcast, request/reply, tunnel and publish/subscribe. The first three schemes always target a specific cluster: broadcast a message to _all_ members of a cluster; send a request to _one_ member of a cluster and wait for the reply; open a streamed, ordered and throttled communication tunnel to _one_ member of a cluster. The pub/sub model is similar to broadcast, but any member of the network may subscribe to the same topic, hence breaking cluster boundaries.
+
+<img src="http://iris.karalabe.com/talks/dotscale/schemes.png" style="height: 200px; display: block; margin-left: auto; margin-right: auto;" \>
+
+Presenting each messaging primitive is out of scope here, but for illustrative purposes the request/reply was included. Given the echo service registered above we can send it requests and wait for replies through any client connection. Iris will automatically locate, route and load balanced between all services registered under the addressed name.
+
+```go
+request := []byte("some request binary")
+if reply, err := conn.Request("echo", request, time.Second); err != nil {
+  log.Printf("failed to execute request: %v.", err)
+} else {
+  fmt.Printf("reply arrived: %v.", string(reply))
+}
+```
+
+### Logging
 
 ### Additional goodies
 
