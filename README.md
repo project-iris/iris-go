@@ -83,11 +83,11 @@ Upon successful registration, Iris invokes the handler's `Init` method with the 
 
 ### Messaging through Iris
 
-Iris supports four messaging schemes: broadcast, request/reply, tunnel and publish/subscribe. The first three schemes always target a specific cluster: broadcast a message to _all_ members of a cluster; send a request to _one_ member of a cluster and wait for the reply; open a streamed, ordered and throttled communication tunnel to _one_ member of a cluster. The pub/sub model is similar to broadcast, but any member of the network may subscribe to the same topic, hence breaking cluster boundaries.
+Iris supports four messaging schemes: request/reply, broadcast, tunnel and publish/subscribe. The first three schemes always target a specific cluster: send a request to _one_ member of a cluster and wait for the reply; broadcast a message to _all_ members of a cluster; open a streamed, ordered and throttled communication tunnel to _one_ member of a cluster. The publish/subscribe model is similar to broadcast, but any member of the network may subscribe to the same topic, hence breaking cluster boundaries.
 
-<img src="http://iris.karalabe.com/talks/dotscale/schemes.png" style="height: 200px; display: block; margin-left: auto; margin-right: auto;" \>
+<img src="http://iris.karalabe.com/talks/fosdem/schemes.png" style="height: 175px; display: block; margin-left: auto; margin-right: auto;" \>
 
-Presenting each messaging primitive is out of scope here, but for illustrative purposes the request/reply was included. Given the echo service registered above we can send it requests and wait for replies through any client connection. Iris will automatically locate, route and load balanced between all services registered under the addressed name.
+Presenting each primitive is out of scope, but for illustrative purposes the request/reply was included. Given the echo service registered above, we can send it requests and wait for replies through any client connection. Iris will automatically locate, route and load balanced between all services registered under the addressed name.
 
 ```go
 request := []byte("some request binary")
