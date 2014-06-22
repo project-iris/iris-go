@@ -49,7 +49,7 @@ Since it generates random credentials, a developer node will not be able to conn
 
 After successfully booting, the relay opens a _local_ TCP endpoint (port `55555` by default, configurable using `-port`) through which arbitrarily many entities may attach. Each connecting entity may also decide whether it becomes a simple _client_ only consuming the services provided by other participants, or a full fledged _service_, also making functionality available to others for consumption.
 
-Connecting as a client can be done trivially by invoking `iris.Connect` with the port number of the local relay's client endpoint. After the attachment is completed, an `iris.Connection` instance is returned through which messaging can commence. A client cannot however receive inbound requests, broadcasts and tunnels, only initiate them.
+Connecting as a client can be done trivially by invoking [`iris.Connect`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Connect) with the port number of the local relay's client endpoint. After the attachment is completed, an [`iris.Connection`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Connection) instance is returned through which messaging can begin. A client cannot accept inbound requests, broadcasts and tunnels, only initiate them.
 
 ```go
 conn, err := iris.Connect(55555)
@@ -59,7 +59,27 @@ if err != nil {
 defer conn.Close()
 ```
 
-To provide functionality for consumption, an entity needs to register as a service. To be continued...
+To provide functionality for consumption, an entity needs to register as a service. This is slightly more involved, as beside initiating a registration request, it also needs to specify a callback handler to process inbound messages. First, the callback handler needs to implement the [`iris.ServiceHandler`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#ServiceHandler) interface. After creating the handler, registration can commence by invoking [`iris.Register`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Register) with the port number of the local relay's client endpoint; the sub-service cluster name this entity will join as a member of; and the handler itself to process inbound messages.
+
+```go
+type EchoHandler struct {}
+
+func (b *EchoHandler) Init(conn *Connection) error              { return nil }
+func (b *EchoHandler) HandleBroadcast(msg []byte)               { }
+func (b *EchoHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
+func (b *EchoHandler) HandleTunnel(tun *Tunnel)                 { }
+func (b *EchoHandler) HandleDrop(reason error)                  { }
+
+func main() {
+  service, err := iris.Register(55555, "echo", new(EchoHandler))
+  if err != nil {
+    log.Fatalf("failed to register to the Iris relay: %v.", err)
+  }
+  defer service.Unregister()
+}
+```
+
+Upon successfully registering to the relay, Iris invokes the service handler's `Init` method with the live `iris.Connection` object - the service's client connection - through which the service itself can initiate outbound requests. `Init` is called only once and is synchronized before any other handler method is invoked.
 
 ### Messaging through Iris
 
