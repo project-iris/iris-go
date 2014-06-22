@@ -59,7 +59,7 @@ if err != nil {
 defer conn.Close()
 ```
 
-To provide functionality for consumption, an entity needs to register as a service. This is slightly more involved, as beside initiating a registration request, it also needs to specify a callback handler to process inbound messages. First, the callback handler needs to implement the [`iris.ServiceHandler`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#ServiceHandler) interface. After creating the handler, registration can commence by invoking [`iris.Register`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Register) with the port number of the local relay's client endpoint; the sub-service cluster name this entity will join as a member of; and the handler itself to process inbound messages.
+To provide functionality for consumption, an entity needs to register as a service. This is slightly more involved, as beside initiating a registration request, it also needs to specify a callback handler to process inbound events. First, the callback handler needs to implement the [`iris.ServiceHandler`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#ServiceHandler) interface. After creating the handler, registration can commence by invoking [`iris.Register`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Register) with the port number of the local relay's client endpoint; the sub-service cluster name this entity will join as a member of; and the handler itself to process inbound messages.
 
 ```go
 type EchoHandler struct {}
@@ -79,7 +79,7 @@ func main() {
 }
 ```
 
-Upon successfully registering to the relay, Iris invokes the service handler's `Init` method with the live `iris.Connection` object - the service's client connection - through which the service itself can initiate outbound requests. `Init` is called only once and is synchronized before any other handler method is invoked.
+Upon successful registration, Iris invokes the handler's `Init` method with the live `iris.Connection` object - the service's client connection - through which the service itself can initiate outbound requests. `Init` is called only once and is synchronized before any other handler method is invoked.
 
 ### Messaging through Iris
 
