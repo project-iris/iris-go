@@ -79,11 +79,11 @@ func main() {
 }
 ```
 
-Upon successful registration, Iris invokes the handler's `Init` method with the live `iris.Connection` object - the service's client connection - through which the service itself can initiate outbound requests. `Init` is called only once and is synchronized before any other handler method is invoked.
+Upon successful registration, Iris invokes the handler's `Init` method with the live [`iris.Connection`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Connection) object - the service's client connection - through which the service itself can initiate outbound requests. `Init` is called only once and is synchronized before any other handler method is invoked.
 
 ### Messaging through Iris
 
-Iris supports four messaging schemes: request/reply, broadcast, tunnel and publish/subscribe. The first three schemes always target a specific cluster: send a request to _one_ member of a cluster and wait for the reply; broadcast a message to _all_ members of a cluster; open a streamed, ordered and throttled communication tunnel to _one_ member of a cluster. The publish/subscribe model is similar to broadcast, but any member of the network may subscribe to the same topic, hence breaking cluster boundaries.
+Iris supports four messaging schemes: request/reply, broadcast, tunnel and publish/subscribe. The first three schemes always target a specific cluster: send a request to _one_ member of a cluster and wait for the reply; broadcast a message to _all_ members of a cluster; open a streamed, ordered and throttled communication tunnel to _one_ member of a cluster. The publish/subscribe is similar to broadcast, but _any_ member of the network may subscribe to the same topic, hence breaking cluster boundaries.
 
 <img src="http://iris.karalabe.com/talks/fosdem/schemes.png" style="height: 175px; display: block; margin-left: auto; margin-right: auto;" \>
 
@@ -99,6 +99,39 @@ if reply, err := conn.Request("echo", request, time.Second); err != nil {
 ```
 
 ### Logging
+
+For logging purposes, the Go binding uses [inconshreveable](https://github.com/inconshreveable)'s [log15](https://github.com/inconshreveable/log15) library (version v2). By default, _INFO_ level logs are collected and printed to _stderr_. This level allows tracking life-cycle events such as client and service attachments, topic subscriptions and tunnel establishments. Further log entries can be requested by lowering the level to _DEBUG_, effectively printing all messages passing through the binding.
+
+The binding's logger can be fine-tuned through the `iris.Log` variable. Below are a few common configurations.
+
+```go
+  // Discard all log entries
+  iris.Log.SetHandler(log15.DiscardHandler())
+
+  // Log DEBUG level entries to STDERR
+  iris.Log.SetHandler(log15.LvlFilterHandler(log15.LvlDebug, log15.StderrHandler))
+```
+
+Each [`iris.Connection`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Connection), [`iris.Service`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Service) and [`iris.Tunnel`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Tunnel) has a public embedded logger, through which contextual log entries may be printed (i.e. tagged with the specific ID of the attached entity).
+
+```go
+  conn, err := iris.Connect(55555)
+  if err != nil {
+    log.Fatalf("failed to connect to Iris: %v.", err)
+  }
+  defer conn.Close()
+
+  conn.Log.Warn("log entry with connection context")
+```
+
+Looking at the output, you can see the custom log entry being tagged with the ID of the client connection.
+
+```
+INFO[06-22|14:03:05] connecting new client                    client=1 relay_port=55555
+INFO[06-22|14:03:05] client connection established            client=1
+WARN[06-22|14:03:05] log entry with connection context        client=1
+INFO[06-22|14:03:05] detaching from relay                     client=1
+```
 
 ### Additional goodies
 

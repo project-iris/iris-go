@@ -17,7 +17,7 @@ import (
 // Schedules an application broadcast message for the service handler to process.
 func (c *Connection) handleBroadcast(message []byte) {
 	id := int(atomic.AddUint64(&c.bcastIdx, 1))
-	c.logger.Debug("scheduling arrived broadcast", "broadcast", id, "data", logLazyBlob(message))
+	c.Log.Debug("scheduling arrived broadcast", "broadcast", id, "data", logLazyBlob(message))
 
 	// Make sure there is enough memory for the message
 	used := int(atomic.LoadInt32(&c.bcastUsed)) // Safe, since only 1 thread increments!
@@ -27,18 +27,18 @@ func (c *Connection) handleBroadcast(message []byte) {
 		c.bcastPool.Schedule(func() {
 			// Start the processing by decrementing the memory usage
 			atomic.AddInt32(&c.bcastUsed, -int32(len(message)))
-			c.logger.Debug("handling scheduled broadcast", "broadcast", id)
+			c.Log.Debug("handling scheduled broadcast", "broadcast", id)
 			c.handler.HandleBroadcast(message)
 		})
 		return
 	}
 	// Not enough memory in the broadcast queue
-	c.logger.Error("broadcast exceeded memory allowance", "broadcast", id, "limit", c.limits.BroadcastMemory, "used", used, "size", len(message))
+	c.Log.Error("broadcast exceeded memory allowance", "broadcast", id, "limit", c.limits.BroadcastMemory, "used", used, "size", len(message))
 }
 
 // Schedules an application request for the service handler to process.
 func (c *Connection) handleRequest(id uint64, request []byte, timeout time.Duration) {
-	logger := c.logger.New("remote_request", id)
+	logger := c.Log.New("remote_request", id)
 	logger.Debug("scheduling arrived request", "data", logLazyBlob(request), "timeout", timeout)
 
 	// Make sure there is enough memory for the request
@@ -105,7 +105,7 @@ func (c *Connection) handlePublish(topic string, event []byte) {
 	if ok {
 		top.handlePublish(event)
 	} else {
-		c.logger.Warn("stale publish arrived", "topic", topic)
+		c.Log.Warn("stale publish arrived", "topic", topic)
 	}
 }
 
@@ -113,7 +113,7 @@ func (c *Connection) handlePublish(topic string, event []byte) {
 func (c *Connection) handleClose(reason error) {
 	// Notify the client of the drop if premature
 	if reason != nil {
-		c.logger.Crit("connection dropped", "reason", reason)
+		c.Log.Crit("connection dropped", "reason", reason)
 		c.handler.HandleDrop(reason)
 	}
 	// Close all open tunnels

@@ -47,7 +47,8 @@ type ServiceHandler interface {
 
 // Service instance belonging to a particular cluster in the network.
 type Service struct {
-	conn *Connection // Network connection to the local Iris relay
+	conn *Connection  // Network connection to the local Iris relay
+	Log  log15.Logger // Logger with service id injected
 }
 
 // Id to assign to the next service (used for logging purposes).
@@ -84,6 +85,7 @@ func Register(port int, cluster string, handler ServiceHandler, limits *ServiceL
 	// Assemble the service object and initialize it
 	serv := &Service{
 		conn: conn,
+		Log:  logger,
 	}
 	if err := handler.Init(conn); err != nil {
 		logger.Warn("user failed to initialize service", "reason", err)

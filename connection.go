@@ -56,7 +56,7 @@ type Connection struct {
 	quit chan chan error // Quit channel to synchronize receiver termination
 	term chan struct{}   // Channel to signal termination to blocked go-routines
 
-	logger log15.Logger
+	Log log15.Logger // Logger with connection id injected
 }
 
 // Id to assign to the next connection (used for logging purposes).
@@ -105,7 +105,7 @@ func newConnection(port int, cluster string, handler ServiceHandler, limits *Ser
 		quit: make(chan chan error),
 		term: make(chan struct{}),
 
-		logger: logger,
+		Log: logger,
 	}
 	// Initialize service QoS fields
 	if cluster != "" {
@@ -138,7 +138,7 @@ func (c *Connection) Broadcast(cluster string, message []byte) error {
 		return errors.New("nil message")
 	}
 	// Broadcast and return
-	c.logger.Debug("sending new broadcast", "cluster", cluster, "data", logLazyBlob(message))
+	c.Log.Debug("sending new broadcast", "cluster", cluster, "data", logLazyBlob(message))
 	return c.sendBroadcast(cluster, message)
 }
 
@@ -179,7 +179,7 @@ func (c *Connection) Request(cluster string, request []byte, timeout time.Durati
 		c.reqLock.Unlock()
 	}()
 	// Send the request
-	c.logger.Debug("sending new request", "local_request", reqId, "cluster", cluster, "data", logLazyBlob(request), "timeout", timeout)
+	c.Log.Debug("sending new request", "local_request", reqId, "cluster", cluster, "data", logLazyBlob(request), "timeout", timeout)
 	if err := c.sendRequest(reqId, cluster, request, timeoutms); err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (c *Connection) Request(cluster string, request []byte, timeout time.Durati
 	case reply = <-repc:
 	case err = <-errc:
 	}
-	c.logger.Debug("request completed", "local_request", reqId, "data", logLazyBlob(reply), "error", err)
+	c.Log.Debug("request completed", "local_request", reqId, "data", logLazyBlob(reply), "error", err)
 	return reply, err
 }
 
@@ -219,7 +219,7 @@ func (c *Connection) Subscribe(topic string, handler TopicHandler, limits *Topic
 		c.subLock.Unlock()
 		return errors.New("already subscribed")
 	}
-	logger := c.logger.New("topic", topic)
+	logger := c.Log.New("topic", topic)
 	logger.Info("subscribing to new topic",
 		"limits", log15.Lazy{func() string {
 			return fmt.Sprintf("%dT|%dB", limits.EventThreads, limits.EventMemory)
@@ -254,7 +254,7 @@ func (c *Connection) Publish(topic string, event []byte) error {
 		return errors.New("nil event")
 	}
 	// Publish and return
-	c.logger.Debug("publishing new event", "topic", topic, "data", logLazyBlob(event))
+	c.Log.Debug("publishing new event", "topic", topic, "data", logLazyBlob(event))
 	return c.sendPublish(topic, event)
 }
 
@@ -306,7 +306,7 @@ func (c *Connection) Tunnel(cluster string, timeout time.Duration) (*Tunnel, err
 //
 // The call blocks until the connection tear-down is confirmed by the Iris node.
 func (c *Connection) Close() error {
-	c.logger.Info("detaching from relay")
+	c.Log.Info("detaching from relay")
 
 	// Send a graceful close to the relay node
 	if err := c.sendClose(); err != nil {
