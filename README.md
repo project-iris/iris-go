@@ -112,7 +112,7 @@ iris.Log.SetHandler(log15.DiscardHandler())
 iris.Log.SetHandler(log15.LvlFilterHandler(log15.LvlDebug, log15.StderrHandler))
 ```
 
-Each [`iris.Connection`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Connection), [`iris.Service`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Service) and [`iris.Tunnel`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Tunnel) has a public embedded logger, through which contextual log entries may be printed (i.e. tagged with the specific ID of the attached entity).
+Each [`iris.Connection`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Connection), [`iris.Service`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Service) and [`iris.Tunnel`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Tunnel) has an embedded logger, through which contextual log entries may be printed (i.e. tagged with the specific ID of the attached entity).
 
 ```go
 conn, err := iris.Connect(55555)
