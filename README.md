@@ -112,26 +112,30 @@ iris.Log.SetHandler(log15.DiscardHandler())
 iris.Log.SetHandler(log15.LvlFilterHandler(log15.LvlDebug, log15.StderrHandler))
 ```
 
-Each [`iris.Connection`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Connection), [`iris.Service`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Service) and [`iris.Tunnel`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Tunnel) has an embedded logger, through which contextual log entries may be printed (i.e. tagged with the specific ID of the attached entity).
+Each [`iris.Connection`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Connection), [`iris.Service`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Service) and [`iris.Tunnel`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Tunnel) has an embedded logger, through which contextual log entries may be printed (i.e. tagged with the specific id of the attached entity).
 
 ```go
-conn, err := iris.Connect(55555)
-if err != nil {
-  log.Fatalf("failed to connect to Iris: %v.", err)
-}
+conn, _ := iris.Connect(55555)
 defer conn.Close()
 
-conn.Log.Warn("log entry with connection context")
+conn.Log.Debug("debug entry, hidden by default")
+conn.Log.Info("info entry, client context included")
+conn.Log.Warn("warning entry, client context included", "extra", "some value")
+conn.Log.Crit("critical entry, client context included", "bool", false, "int", 1, "string", "two")
 ```
 
-Looking at the output, you can see the custom log entry being tagged with the ID of the client connection.
+As you can see below, all log entries have been automatically tagged with the `client` attribute, set to the id of the current connection. Since the default log level is _INFO_, the `conn.Log.Debug` invocation has no effect. Additionally, arbitrarily many key-value pairs may be included in the entry.
 
 ```
-INFO[06-22|14:03:05] connecting new client                    client=1 relay_port=55555
-INFO[06-22|14:03:05] client connection established            client=1
-WARN[06-22|14:03:05] log entry with connection context        client=1
-INFO[06-22|14:03:05] detaching from relay                     client=1
+INFO[06-22|18:39:49] connecting new client                    client=1 relay_port=55555
+INFO[06-22|18:39:49] client connection established            client=1
+INFO[06-22|18:39:49] info entry, client context included      client=1
+WARN[06-22|18:39:49] warning entry, client context included   client=1 extra="some value"
+CRIT[06-22|18:39:49] critical entry, client context included  client=1 bool=false int=1 string=two
+INFO[06-22|18:39:49] detaching from relay                     client=1
 ```
+
+For further capabilities, configurations and details about the logger, please consult the [log15 docs](https://godoc.org/github.com/inconshreveable/log15).
 
 ### Additional goodies
 
