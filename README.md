@@ -98,6 +98,8 @@ if reply, err := conn.Request("echo", request, time.Second); err != nil {
 }
 ```
 
+An expanded summary of the supported messaging schemes can be found in the [core concepts](http://iris.karalabe.com/book/core_concepts) section of [the book of Iris](http://iris.karalabe.com/book). A detailed presentation and analysis of each individual primitive will be added soon.
+
 ### Logging
 
 For logging purposes, the Go binding uses [inconshreveable](https://github.com/inconshreveable)'s [log15](https://github.com/inconshreveable/log15) library (version v2). By default, _INFO_ level logs are collected and printed to _stderr_. This level allows tracking life-cycle events such as client and service attachments, topic subscriptions and tunnel establishments. Further log entries can be requested by lowering the level to _DEBUG_, effectively printing all messages passing through the binding.
@@ -139,7 +141,7 @@ For further capabilities, configurations and details about the logger, please co
 
 ### Additional goodies
 
-A demo presentation is also available, touching on all the features of the library through a handful of challenges and their solutions. The recommended version is the [playground](http://play.iris.karalabe.com/talks/binds/go.slide), containing modifiable and executable code snippets. A [read only version](http://iris.karalabe.com/talks/binds/go.slide) is also available.
+You can find a teaser presentation, touching on all the key features of the library through a handful of challenges and their solutions. The recommended version is the [playground](http://play.iris.karalabe.com/talks/binds/go.slide), containing modifiable and executable code snippets, but a [read only](http://iris.karalabe.com/talks/binds/go.slide) one is also available.
 
   Contributions
 -----------------
