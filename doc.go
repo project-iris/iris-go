@@ -167,8 +167,8 @@ have been introduced.
 
 Many operations - such as requests and tunnels - can time out. To allow checking
 for this particular failure, Iris returns iris.ErrTimeout in such scenarios.
-Similarly, connections, services and tunnels may fail in the network, in the case
-of which all pending operations will be terminate with iris.ErrClosed.
+Similarly, connections, services and tunnels may fail, in the case of which all
+pending operations terminate with iris.ErrClosed.
 
 Additionally, the requests/reply pattern supports sending back an error instead of
 a reply to the caller. To enable the originating node to check whether a request
