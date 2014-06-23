@@ -104,18 +104,18 @@ An expanded summary of the supported messaging schemes can be found in the [core
 
 The binding uses the idiomatic Go error handling mechanisms of returning `error` instances whenever a failure occurs. However, there are a few common cases that need to be individually checkable, hence a few special errors values and types have been introduced.
 
-Many operations, such as requests and tunnels, can time out. In order to allow checking for this particular failure, Iris returns `iris.ErrTimeout` in such scenarios. Similarly, connections, services and tunnels may fail in the network, in the case of which any pending operations will be terminated with an `iris.ErrClosed` error.
+Many operations - such as requests and tunnels - can time out. To allow checking for this particular failure, Iris returns [`iris.ErrTimeout`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#pkg-variables) in such scenarios. Similarly, connections, services and tunnels may fail in the network, in the case of which all pending operations will be terminate with [`iris.ErrClosed`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#pkg-variables).
 
-Additionally, the requests/reply pattern supports sending back an error instead of a reply to the caller. To enable the originating node to check whether a request failed locally or remotely, all remote errors are wrapped in an `iris.RemoteError` structure.
+Additionally, the requests/reply pattern supports sending back an error instead of a reply to the caller. To enable the originating node to check whether a request failed locally or remotely, all remote errors are wrapped in an [`iris.RemoteError`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#RemoteError) type.
 
 ```go
-_, err := conn.Request("cluster", request, time.Second)
+_, err := conn.Request("cluster", request, timeout)
 switch err {
   case nil:
     // Request completed successfully
   case iris.ErrTimeout:
     // Request timed out
-  case iris.Closed:
+  case iris.ErrClosed:
     // Connection terminated
   default:
     if _, ok := err.(*iris.RemoteError); ok {

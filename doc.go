@@ -158,6 +158,39 @@ concepts [http://iris.karalabe.com/book/core_concepts] section of the book of
 Iris [http://iris.karalabe.com/book]. A detailed presentation and analysis of
 each individual primitive will be added soon.
 
+Error handling
+
+The binding uses the idiomatic Go error handling mechanisms of returning error
+instances whenever a failure occurs. However, there are a few common cases that
+need to be individually checkable, hence a few special errors values and types
+have been introduced.
+
+Many operations - such as requests and tunnels - can time out. To allow checking
+for this particular failure, Iris returns iris.ErrTimeout in such scenarios.
+Similarly, connections, services and tunnels may fail in the network, in the case
+of which all pending operations will be terminate with iris.ErrClosed.
+
+Additionally, the requests/reply pattern supports sending back an error instead of
+a reply to the caller. To enable the originating node to check whether a request
+failed locally or remotely, all remote errors are wrapped in an iris.RemoteError
+type.
+
+    _, err := conn.Request("cluster", request, timeout)
+    switch err {
+      case nil:
+        // Request completed successfully
+      case iris.ErrTimeout:
+        // Request timed out
+      case iris.ErrClosed:
+        // Connection terminated
+      default:
+        if _, ok := err.(*iris.RemoteError); ok {
+          // Request failed remotely
+        } else {
+          // Requesting failed locally
+        }
+    }
+
 Logging
 
 For logging purposes, the Go binding uses inconshreveable's [https://github.com/inconshreveable]
