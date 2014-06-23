@@ -27,6 +27,8 @@ To import this package, add the following line to your code:
 
 Refer to it as _iris_.
 
+Version `v0` of the binding is compatible with Iris `v0.1-pre` through `v0.2.0`.
+
   Quickstart
 --------------
 
