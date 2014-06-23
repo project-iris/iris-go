@@ -59,7 +59,7 @@ if err != nil {
 defer conn.Close()
 ```
 
-To provide functionality for consumption, an entity needs to register as a service. This is slightly more involved, as beside initiating a registration request, it also needs to specify a callback handler to process inbound events. First, the callback handler needs to implement the [`iris.ServiceHandler`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#ServiceHandler) interface. After creating the handler, registration can commence by invoking [`iris.Register`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Register) with the port number of the local relay's client endpoint; sub-service cluster this entity will join as a member; and handler itself to process inbound messages.
+To provide functionality for consumption, an entity needs to register as a service. This is slightly more involved, as beside initiating a registration request, it also needs to specify a callback handler to process inbound events. First, the callback handler needs to implement the [`iris.ServiceHandler`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#ServiceHandler) interface. After creating the handler, registration can commence by invoking [`iris.Register`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#Register) with the port number of the local relay's client endpoint; sub-service cluster this entity will join as a member; handler itself to process inbound messages and an optional resource cap.
 
 ```go
 type EchoHandler struct {}
@@ -71,7 +71,7 @@ func (b *EchoHandler) HandleTunnel(tun *Tunnel)                 { }
 func (b *EchoHandler) HandleDrop(reason error)                  { }
 
 func main() {
-  service, err := iris.Register(55555, "echo", new(EchoHandler))
+  service, err := iris.Register(55555, "echo", new(EchoHandler), nil)
   if err != nil {
     log.Fatalf("failed to register to the Iris relay: %v.", err)
   }
@@ -125,6 +125,30 @@ switch err {
     }
 }
 ```
+
+### Resource capping
+
+To prevent the network from overwhelming an attached process, the binding places thread and memory limits on the broadcasts/requests inbound to a registered service as well as on the events received by a topic subscription. The thread limit defines the concurrent processing allowance, whereas the memory limit the maximal length of the pending queue.
+
+The default values - listed below - can be overridden during service registration and topic subscription via [`iris.ServiceLimits`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#ServiceLimits) and [`iris.TopicLimits`](http://godoc.org/gopkg.in/project-iris/iris-go.v1#TopicLimits). Any unset fields (i.e. value of zero) will default to the preset ones.
+
+```go
+// Default limits of the threading and memory usage of a registered service.
+var defaultServiceLimits = ServiceLimits{
+  BroadcastThreads: 4 * runtime.NumCPU(),
+  BroadcastMemory:  64 * 1024 * 1024,
+  RequestThreads:   4 * runtime.NumCPU(),
+  RequestMemory:    64 * 1024 * 1024,
+}
+
+// Default limits of the threading and memory usage of a subscription.
+var defaultTopicLimits = TopicLimits{
+  EventThreads: 4 * runtime.NumCPU(),
+  EventMemory:  64 * 1024 * 1024,
+}
+```
+
+There is also a sanity limit on the input buffer of a tunnel, but it is not exposed through the API as tunnels are meant as structural primitives, not sensitive to load. This may change in the future.
 
 ### Logging
 
