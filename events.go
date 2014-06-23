@@ -88,7 +88,7 @@ func (c *Connection) handleReply(id uint64, reply []byte, fault string) {
 	if reply == nil && len(fault) == 0 {
 		c.reqErrs[id] <- ErrTimeout
 	} else if reply == nil {
-		c.reqErrs[id] <- errors.New(fault)
+		c.reqErrs[id] <- &RemoteError{errors.New(fault)}
 	} else {
 		c.reqReps[id] <- reply
 	}

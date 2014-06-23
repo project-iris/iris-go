@@ -100,6 +100,32 @@ if reply, err := conn.Request("echo", request, time.Second); err != nil {
 
 An expanded summary of the supported messaging schemes can be found in the [core concepts](http://iris.karalabe.com/book/core_concepts) section of [the book of Iris](http://iris.karalabe.com/book). A detailed presentation and analysis of each individual primitive will be added soon.
 
+### Error handling
+
+The binding uses the idiomatic Go error handling mechanisms of returning `error` instances whenever a failure occurs. However, there are a few common cases that need to be individually checkable, hence a few special errors values and types have been introduced.
+
+Many operations, such as requests and tunnels, can time out. In order to allow checking for this particular failure, Iris returns `iris.ErrTimeout` in such scenarios. Similarly, connections, services and tunnels may fail in the network, in the case of which any pending operations will be terminated with an `iris.ErrClosed` error.
+
+Additionally, the requests/reply pattern supports sending back an error instead of a reply to the caller. To enable the originating node to check whether a request failed locally or remotely, all remote errors are wrapped in an `iris.RemoteError` structure.
+
+```go
+_, err := conn.Request("cluster", request, time.Second)
+switch err {
+  case nil:
+    // Request completed successfully
+  case iris.ErrTimeout:
+    // Request timed out
+  case iris.Closed:
+    // Connection terminated
+  default:
+    if _, ok := err.(*iris.RemoteError); ok {
+      // Request failed remotely
+    } else {
+      // Requesting failed locally
+    }
+}
+```
+
 ### Logging
 
 For logging purposes, the Go binding uses [inconshreveable](https://github.com/inconshreveable)'s [log15](https://github.com/inconshreveable/log15) library (version v2). By default, _INFO_ level logs are collected and printed to _stderr_. This level allows tracking life-cycle events such as client and service attachments, topic subscriptions and tunnel establishments. Further log entries can be requested by lowering the level to _DEBUG_, effectively printing all messages passing through the binding.

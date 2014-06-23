@@ -147,10 +147,11 @@ func TestRequestFail(t *testing.T) {
 	for i := 0; i < conf.requests; i++ {
 		request := fmt.Sprintf("failure %d", i)
 		reply, err := handler.conn.Request(config.cluster, []byte(request), time.Second)
-		switch {
-		case err == nil:
+		if err == nil {
 			t.Fatalf("request didn't fail: %v.", reply)
-		case err.Error() != request:
+		} else if _, ok := err.(*RemoteError); !ok {
+			t.Fatalf("request didn't fail remotely: %v.", err)
+		} else if err.Error() != request {
 			t.Fatalf("error message mismatch: have %v, want %v.", err, request)
 		}
 	}
