@@ -1,7 +1,9 @@
   Iris Go binding
 ===================
 
-This is the official Go language binding for the Iris cloud messaging framework. If you are unfamiliar with Iris, please read the next introductory section. It contains a short summary, as well as some valuable pointers on where you can discover more.
+This is the official Go language binding for the Iris cloud messaging framework. This version `v0` of the binding is compatible with Iris `v0.1-pre` through `v0.2.0`.
+
+If you are unfamiliar with Iris, please read the next introductory section. It contains a short summary, as well as some valuable pointers on where you can discover more.
 
   Background
 -------------------
@@ -26,8 +28,6 @@ To import this package, add the following line to your code:
     import "gopkg.in/project-iris/iris-go.v0"
 
 Refer to it as _iris_.
-
-Version `v0` of the binding is compatible with Iris `v0.1-pre` through `v0.2.0`.
 
   Quickstart
 --------------
