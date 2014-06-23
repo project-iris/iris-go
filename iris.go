@@ -4,7 +4,6 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-// Package iris contains the Go binding to the Iris cloud messaging framework.
 package iris
 
 import "errors"
