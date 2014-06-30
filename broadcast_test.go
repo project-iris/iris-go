@@ -240,6 +240,16 @@ func TestBroadcastMemoryLimit(t *testing.T) {
 		t.Fatalf("large broadcast received.")
 	default:
 	}
+	// Check that space freed gets replenished
+	if err := handler.conn.Broadcast(config.cluster, []byte{0x00}); err != nil {
+		t.Fatalf("second small broadcast failed: %v.", err)
+	}
+	time.Sleep(time.Millisecond)
+	select {
+	case <-handler.delivers:
+	default:
+		t.Fatalf("second small broadcast not received.")
+	}
 }
 
 // Benchmarks broadcasting a single message.

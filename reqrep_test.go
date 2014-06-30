@@ -277,6 +277,10 @@ func TestRequestMemoryLimit(t *testing.T) {
 	if rep, err := handler.conn.Request(config.cluster, []byte{0x00, 0x00}, 25*time.Millisecond); err != ErrTimeout {
 		t.Fatalf("large request didn't time out: %v : %v.", rep, err)
 	}
+	// Check that space freed gets replenished
+	if _, err := handler.conn.Request(config.cluster, []byte{0x00}, 25*time.Millisecond); err != nil {
+		t.Fatalf("second small request failed: %v.", err)
+	}
 }
 
 // Service handler for the request/reply expiry tests.

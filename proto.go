@@ -58,7 +58,7 @@ func (c *Connection) sendBool(data bool) error {
 	return c.sendByte(0)
 }
 
-// Serializes a variable int into the relay using base 128 encoding into the relay connection.
+// Serializes a variable int using base 128 encoding into the relay connection.
 func (c *Connection) sendVarint(data uint64) error {
 	for data > 127 {
 		// Internal byte, set the continuation flag and send
@@ -336,7 +336,7 @@ func (c *Connection) recvBool() (bool, error) {
 	}
 }
 
-// Retrieves a variable int from the relay in base 128 encoding from the relay connection.
+// Retrieves a variable int in base 128 encoding from the relay connection.
 func (c *Connection) recvVarint() (uint64, error) {
 	var num uint64
 	for i := uint(0); ; i++ {
