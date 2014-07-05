@@ -4,13 +4,13 @@
 // cloud messaging framework, and as such, the same licensing terms apply.
 // For details please see http://iris.karalabe.com/downloads#License
 
-//
+// Contains the default service, topic and tunnel limits used by the binding.
 
 package iris
 
 import "runtime"
 
-//
+// User limits of the threading and memory usage of a registered service.
 type ServiceLimits struct {
 	BroadcastThreads int // Broadcast handlers to execute concurrently
 	BroadcastMemory  int // Memory allowance for pending broadcasts
@@ -18,7 +18,7 @@ type ServiceLimits struct {
 	RequestMemory    int // Memory allowance for pending requests
 }
 
-//
+// User limits of the threading and memory usage of a subscription.
 type TopicLimits struct {
 	EventThreads int // Event handlers to execute concurrently
 	EventMemory  int // Memory allowance for pending events

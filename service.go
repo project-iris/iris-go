@@ -126,7 +126,10 @@ func finalizeServiceLimits(user *ServiceLimits) *ServiceLimits {
 	return limits
 }
 
-// Unregisters the service instance from the Iris network.
+// Unregisters the service instance from the Iris network, removing all
+// subscriptions and closing all active tunnels.
+//
+// The call blocks until the tear-down is confirmed by the Iris node.
 func (s *Service) Unregister() error {
 	// Tear-down the connection
 	err := s.conn.Close()
