@@ -29,6 +29,7 @@ type Connection struct {
 	reqErrs map[uint64]chan error  // Error channels for active requests
 	reqLock sync.RWMutex           // Mutex to protect the result channel maps
 
+	subIdx  uint64            // Index to assign the next subscription (logging purposes)
 	subLive map[string]*topic // Active subscriptions
 	subLock sync.RWMutex      // Mutex to protect the subscription map
 
@@ -219,8 +220,8 @@ func (c *Connection) Subscribe(topic string, handler TopicHandler, limits *Topic
 		c.subLock.Unlock()
 		return errors.New("already subscribed")
 	}
-	logger := c.Log.New("topic", topic)
-	logger.Info("subscribing to new topic",
+	logger := c.Log.New("topic", atomic.AddUint64(&c.subIdx, 1))
+	logger.Info("subscribing to new topic", "name", topic,
 		"limits", log15.Lazy{func() string {
 			return fmt.Sprintf("%dT|%dB", limits.EventThreads, limits.EventMemory)
 		}})
