@@ -323,6 +323,16 @@ func TestPublishMemoryLimit(t *testing.T) {
 		t.Fatalf("large publish received.")
 	default:
 	}
+	// Check that space freed gets replenished
+	if err := conn.Publish(config.topic, []byte{0x00}); err != nil {
+		t.Fatalf("second small publish failed: %v.", err)
+	}
+	time.Sleep(time.Millisecond)
+	select {
+	case <-handler.delivers:
+	default:
+		t.Fatalf("second small publish not received.")
+	}
 }
 
 // Benchmarks the latency of a single publish operation.
