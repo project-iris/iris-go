@@ -51,6 +51,7 @@ type Connection struct {
 	sock     net.Conn          // Network connection to the iris node
 	sockBuf  *bufio.ReadWriter // Buffered access to the network socket
 	sockLock sync.Mutex        // Mutex to atomize message sending
+	sockWait int32             // Counter for the pending writes (batch before flush)
 
 	// Bookkeeping fields
 	init chan struct{}   // Init channel to receive a success signal

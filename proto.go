@@ -14,6 +14,7 @@ package iris
 import (
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
 )
 
@@ -87,232 +88,200 @@ func (c *Connection) sendString(data string) error {
 	return c.sendBinary([]byte(data))
 }
 
+func (c *Connection) sendPacket(closure func() error) error {
+	// Increment the pending write count
+	atomic.AddInt32(&c.sockWait, 1)
+
+	// Acquire the socket lock
+	c.sockLock.Lock()
+	defer c.sockLock.Unlock()
+
+	// Send the packet itself
+	if err := closure(); err != nil {
+		return err
+	}
+	// Flush the stream if no more messages are pending
+	if atomic.AddInt32(&c.sockWait, -1) == 0 {
+		return c.sockBuf.Flush()
+	}
+	return nil
+}
+
 // Sends a connection initiation.
 func (c *Connection) sendInit(cluster string) error {
-	if err := c.sendByte(opInit); err != nil {
-		return err
-	}
-	if err := c.sendString(clientMagic); err != nil {
-		return err
-	}
-	if err := c.sendString(protoVersion); err != nil {
-		return err
-	}
-	if err := c.sendString(cluster); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opInit); err != nil {
+			return err
+		}
+		if err := c.sendString(clientMagic); err != nil {
+			return err
+		}
+		if err := c.sendString(protoVersion); err != nil {
+			return err
+		}
+		return c.sendString(cluster)
+	})
 }
 
 // Sends a connection tear-down initiation.
 func (c *Connection) sendClose() error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opClose); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		return c.sendByte(opClose)
+	})
 }
 
 // Sends an application broadcast initiation.
 func (c *Connection) sendBroadcast(cluster string, message []byte) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opBroadcast); err != nil {
-		return err
-	}
-	if err := c.sendString(cluster); err != nil {
-		return err
-	}
-	if err := c.sendBinary(message); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opBroadcast); err != nil {
+			return err
+		}
+		if err := c.sendString(cluster); err != nil {
+			return err
+		}
+		return c.sendBinary(message)
+	})
 }
 
 // Sends an application request initiation.
 func (c *Connection) sendRequest(id uint64, cluster string, request []byte, timeout int) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opRequest); err != nil {
-		return err
-	}
-	if err := c.sendVarint(id); err != nil {
-		return err
-	}
-	if err := c.sendString(cluster); err != nil {
-		return err
-	}
-	if err := c.sendBinary(request); err != nil {
-		return err
-	}
-	if err := c.sendVarint(uint64(timeout)); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opRequest); err != nil {
+			return err
+		}
+		if err := c.sendVarint(id); err != nil {
+			return err
+		}
+		if err := c.sendString(cluster); err != nil {
+			return err
+		}
+		if err := c.sendBinary(request); err != nil {
+			return err
+		}
+		return c.sendVarint(uint64(timeout))
+	})
 }
 
 // Sends an application reply initiation.
 func (c *Connection) sendReply(id uint64, reply []byte, fault string) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opReply); err != nil {
-		return err
-	}
-	if err := c.sendVarint(id); err != nil {
-		return err
-	}
-	success := (len(fault) == 0)
-	if err := c.sendBool(success); err != nil {
-		return err
-	}
-	if success {
-		if err := c.sendBinary(reply); err != nil {
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opReply); err != nil {
 			return err
 		}
-	} else {
-		if err := c.sendString(fault); err != nil {
+		if err := c.sendVarint(id); err != nil {
 			return err
 		}
-	}
-	return c.sockBuf.Flush()
+		success := (len(fault) == 0)
+		if err := c.sendBool(success); err != nil {
+			return err
+		}
+		if success {
+			return c.sendBinary(reply)
+		} else {
+			return c.sendString(fault)
+		}
+	})
 }
 
 // Sends a topic subscription.
 func (c *Connection) sendSubscribe(topic string) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opSubscribe); err != nil {
-		return err
-	}
-	if err := c.sendString(topic); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opSubscribe); err != nil {
+			return err
+		}
+		return c.sendString(topic)
+	})
 }
 
 // Sends a topic subscription removal.
 func (c *Connection) sendUnsubscribe(topic string) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opUnsubscribe); err != nil {
-		return err
-	}
-	if err := c.sendString(topic); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opUnsubscribe); err != nil {
+			return err
+		}
+		return c.sendString(topic)
+	})
 }
 
 // Sends a topic event publish.
 func (c *Connection) sendPublish(topic string, event []byte) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opPublish); err != nil {
-		return err
-	}
-	if err := c.sendString(topic); err != nil {
-		return err
-	}
-	if err := c.sendBinary(event); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opPublish); err != nil {
+			return err
+		}
+		if err := c.sendString(topic); err != nil {
+			return err
+		}
+		return c.sendBinary(event)
+	})
 }
 
 // Sends a tunnel construction request.
 func (c *Connection) sendTunnelInit(id uint64, cluster string, timeout int) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opTunInit); err != nil {
-		return err
-	}
-	if err := c.sendVarint(id); err != nil {
-		return err
-	}
-	if err := c.sendString(cluster); err != nil {
-		return err
-	}
-	if err := c.sendVarint(uint64(timeout)); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opTunInit); err != nil {
+			return err
+		}
+		if err := c.sendVarint(id); err != nil {
+			return err
+		}
+		if err := c.sendString(cluster); err != nil {
+			return err
+		}
+		return c.sendVarint(uint64(timeout))
+	})
 }
 
 // Sends a tunnel confirmation.
 func (c *Connection) sendTunnelConfirm(buildId, tunId uint64) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opTunConfirm); err != nil {
-		return err
-	}
-	if err := c.sendVarint(buildId); err != nil {
-		return err
-	}
-	if err := c.sendVarint(tunId); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opTunConfirm); err != nil {
+			return err
+		}
+		if err := c.sendVarint(buildId); err != nil {
+			return err
+		}
+		return c.sendVarint(tunId)
+	})
 }
 
 // Sends a tunnel transfer allowance.
 func (c *Connection) sendTunnelAllowance(id uint64, space int) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opTunAllow); err != nil {
-		return err
-	}
-	if err := c.sendVarint(id); err != nil {
-		return err
-	}
-	if err := c.sendVarint(uint64(space)); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opTunAllow); err != nil {
+			return err
+		}
+		if err := c.sendVarint(id); err != nil {
+			return err
+		}
+		return c.sendVarint(uint64(space))
+	})
 }
 
 // Sends a tunnel data exchange.
 func (c *Connection) sendTunnelTransfer(id uint64, sizeOrCont int, payload []byte) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opTunTransfer); err != nil {
-		return err
-	}
-	if err := c.sendVarint(id); err != nil {
-		return err
-	}
-	if err := c.sendVarint(uint64(sizeOrCont)); err != nil {
-		return err
-	}
-	if err := c.sendBinary(payload); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opTunTransfer); err != nil {
+			return err
+		}
+		if err := c.sendVarint(id); err != nil {
+			return err
+		}
+		if err := c.sendVarint(uint64(sizeOrCont)); err != nil {
+			return err
+		}
+		return c.sendBinary(payload)
+	})
 }
 
 // Sends a tunnel termination request.
 func (c *Connection) sendTunnelClose(id uint64) error {
-	c.sockLock.Lock()
-	defer c.sockLock.Unlock()
-
-	if err := c.sendByte(opTunClose); err != nil {
-		return err
-	}
-	if err := c.sendVarint(id); err != nil {
-		return err
-	}
-	return c.sockBuf.Flush()
+	return c.sendPacket(func() error {
+		if err := c.sendByte(opTunClose); err != nil {
+			return err
+		}
+		return c.sendVarint(id)
+	})
 }
 
 // Retrieves a single byte from the relay connection.
