@@ -88,6 +88,7 @@ func (c *Connection) sendString(data string) error {
 	return c.sendBinary([]byte(data))
 }
 
+// Serializes a packet through a closure into the relay connection.
 func (c *Connection) sendPacket(closure func() error) error {
 	// Increment the pending write count
 	atomic.AddInt32(&c.sockWait, 1)
@@ -98,6 +99,8 @@ func (c *Connection) sendPacket(closure func() error) error {
 
 	// Send the packet itself
 	if err := closure(); err != nil {
+		// Decrement the pending count and error out
+		atomic.AddInt32(&c.sockWait, -1)
 		return err
 	}
 	// Flush the stream if no more messages are pending
