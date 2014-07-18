@@ -66,10 +66,10 @@ To provide functionality for consumption, an entity needs to register as a servi
 ```go
 type EchoHandler struct {}
 
-func (b *EchoHandler) Init(conn *iris.Connection) error              { return nil }
+func (b *EchoHandler) Init(conn *iris.Connection) error         { return nil }
 func (b *EchoHandler) HandleBroadcast(msg []byte)               { }
 func (b *EchoHandler) HandleRequest(req []byte) ([]byte, error) { return req, nil }
-func (b *EchoHandler) HandleTunnel(tun *iris.Tunnel)                 { }
+func (b *EchoHandler) HandleTunnel(tun *iris.Tunnel)            { }
 func (b *EchoHandler) HandleDrop(reason error)                  { }
 
 func main() {
