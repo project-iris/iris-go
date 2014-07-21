@@ -256,8 +256,8 @@ func TestTunnelOverload(t *testing.T) {
 	}
 }
 
-// Benchmarks the latency of a single tunnel send (actually two way, so halves
-// it).
+// Benchmarks the latency of the tunnel data transfer (actually two way, so
+// halves it).
 func BenchmarkTunnelLatency(b *testing.B) {
 	// Create the service handler
 	handler := new(tunnelTestHandler)
