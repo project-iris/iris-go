@@ -114,7 +114,11 @@ func (c *Connection) handleClose(reason error) {
 	// Notify the client of the drop if premature
 	if reason != nil {
 		c.Log.Crit("connection dropped", "reason", reason)
-		c.handler.HandleDrop(reason)
+
+		// Only server connections have registered handlers
+		if c.handler != nil {
+			c.handler.HandleDrop(reason)
+		}
 	}
 	// Close all open tunnels
 	c.tunLock.Lock()
