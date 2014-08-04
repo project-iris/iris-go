@@ -193,7 +193,7 @@ For further capabilities, configurations and details about the logger, please co
 
 ### Additional goodies
 
-You can find a teaser presentation, touching on all the key features of the library through a handful of challenges and their solutions. The recommended version is the [playground](http://play.iris.karalabe.com/talks/binds/go.slide), containing modifiable and executable code snippets, but a [read only](http://iris.karalabe.com/talks/binds/go.slide) one is also available.
+You can find a teaser presentation, touching on all the key features of the library through a handful of challenges and their solutions. The recommended version is the [playground](http://play.iris.karalabe.com/talks/binds/go.v1.slide), containing modifiable and executable code snippets, but a [read only](http://iris.karalabe.com/talks/binds/go.v1.slide) one is also available.
 
   Contributions
 -----------------
