@@ -235,7 +235,7 @@ func TestTunnelOverload(t *testing.T) {
 	// Overload the tunnel by partially transferring huge messages
 	blob := make([]byte, 64*1024*1024)
 	for i := 0; i < 10; i++ {
-		if err := tunnel.Send(blob, time.Millisecond); err != ErrTimeout {
+		if err := tunnel.Send(blob, 10*time.Millisecond); err != ErrTimeout {
 			t.Fatalf("unexpected send result: have %v, want %v.", err, ErrTimeout)
 		}
 	}
