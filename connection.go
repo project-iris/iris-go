@@ -136,8 +136,8 @@ func (c *Connection) Broadcast(cluster string, message []byte) error {
 	if len(cluster) == 0 {
 		return errors.New("empty cluster identifier")
 	}
-	if message == nil {
-		return errors.New("nil message")
+	if message == nil || len(message) == 0 {
+		return errors.New("nil or empty message")
 	}
 	// Broadcast and return
 	c.Log.Debug("sending new broadcast", "cluster", cluster, "data", logLazyBlob(message))
@@ -153,8 +153,8 @@ func (c *Connection) Request(cluster string, request []byte, timeout time.Durati
 	if len(cluster) == 0 {
 		return nil, errors.New("empty cluster identifier")
 	}
-	if request == nil {
-		return nil, errors.New("nil request")
+	if request == nil || len(request) == 0 {
+		return nil, errors.New("nil or empty request")
 	}
 	timeoutms := int(timeout.Nanoseconds() / 1000000)
 	if timeoutms < 1 {
@@ -252,8 +252,8 @@ func (c *Connection) Publish(topic string, event []byte) error {
 	if len(topic) == 0 {
 		return errors.New("empty topic identifier")
 	}
-	if event == nil {
-		return errors.New("nil event")
+	if event == nil || len(event) == 0 {
+		return errors.New("nil or empty event")
 	}
 	// Publish and return
 	c.Log.Debug("publishing new event", "topic", topic, "data", logLazyBlob(event))

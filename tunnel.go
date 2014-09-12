@@ -156,8 +156,8 @@ func (t *Tunnel) Send(message []byte, timeout time.Duration) error {
 	t.Log.Debug("sending message", "data", logLazyBlob(message), "timeout", logLazyTimeout(timeout))
 
 	// Sanity check on the arguments
-	if message == nil {
-		return errors.New("nil message")
+	if message == nil || len(message) == 0 {
+		return errors.New("nil or empty message")
 	}
 	// Create timeout signaler
 	var deadline <-chan time.Time
