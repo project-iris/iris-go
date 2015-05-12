@@ -22,15 +22,15 @@ type TopicHandler interface {
 
 // Topic subscription, responsible for enforcing the quality of service limits.
 type topic struct {
+	eventIdx  uint64           // Index to assign to inbound events for logging purposes
+	eventPool *pool.ThreadPool // Queue and concurrency limiter for the event handlers
+	eventUsed int32            // Actual memory usage of the event queue
+
 	// Application layer fields
 	handler TopicHandler // Handler for topic events
 
 	// Quality of service fields
 	limits *TopicLimits // Limits on the inbound message processing
-
-	eventIdx  uint64           // Index to assign to inbound events for logging purposes
-	eventPool *pool.ThreadPool // Queue and concurrency limiter for the event handlers
-	eventUsed int32            // Actual memory usage of the event queue
 
 	// Bookkeeping fields
 	logger log15.Logger
